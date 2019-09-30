@@ -39,7 +39,7 @@ namespace Vault2Git.CLI
             [Option("directories", HelpText = "Subdirectories to process within Sourcegear Vault repo", Separator = ';')]
             public IEnumerable<string> Directories { get; set; }
 
-            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(RestartLimit)}: {RestartLimit}, {nameof(UseConsole)}: {UseConsole}, {nameof(UseCapsLock)}: {UseCapsLock}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Pause)}: {Pause}, {nameof(Paths)}: {Paths}, {nameof(Work)}: {Work}, {nameof(Branches)}: {Branches}, {nameof(Directories)}: {Directories}";
+            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(RestartLimit)}: {RestartLimit}, {nameof(UseConsole)}: {UseConsole}, {nameof(UseCapsLock)}: {UseCapsLock}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Pause)}: {Pause}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}";
         }
         
         private static bool _useCapsLock;
@@ -175,19 +175,19 @@ namespace Vault2Git.CLI
                 switch (version)
                 {
                     case Processor.ProgressSpecialVersionInit:
-                        Console.WriteLine("init took {0}", timeSpan);
+                        Console.WriteLine($"init took {timeSpan}");
                         break;
                     case Processor.ProgressSpecialVersionGc:
-                        Console.WriteLine("gc took {0}", timeSpan);
+                        Console.WriteLine($"gc took {timeSpan}");
                         break;
                     case Processor.ProgressSpecialVersionFinalize:
-                        Console.WriteLine("finalization took {0}", timeSpan);
+                        Console.WriteLine($"finalization took {timeSpan}");
                         break;
                     case Processor.ProgressSpecialVersionTags:
-                        Console.WriteLine("tags creation took {0}", timeSpan);
+                        Console.WriteLine($"tags creation took {timeSpan}");
                         break;
                     default:
-                        Console.WriteLine("processing version {0} took {1}", version, timeSpan);
+                        Console.WriteLine($"processing version {version} took {timeSpan}");
                         break;
                 }
             }
