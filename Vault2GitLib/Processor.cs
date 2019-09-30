@@ -167,7 +167,7 @@ namespace Vault2Git.Lib
             int ticks = 0;
 
             //get git current branch name
-            ticks += this.gitCurrentBranch(out OriginalGitBranch);
+            ticks += gitCurrentBranch(out OriginalGitBranch);
             Console.WriteLine($"Starting git branch is {OriginalGitBranch}");
             
             //reorder target branches to start from current branch, so don't need to do checkout for first branch
@@ -207,7 +207,7 @@ namespace Vault2Git.Lib
 
                     //get vaultVersions
                     IDictionary<long, VaultVersionInfo> vaultVersions = new SortedList<long, VaultVersionInfo>();
-                    ticks += this.vaultPopulateInfo(vaultRepoPath, vaultVersions);
+                    ticks += vaultPopulateInfo(vaultRepoPath, vaultVersions);
                     var versionsToProcess = vaultVersions.Where(p => p.Key > currentGitVaultVersion).ToList();
 
                     //do init only if there is something to work on
@@ -366,7 +366,7 @@ namespace Vault2Git.Lib
                                   .ToList()
                                   .ForEach(f => ticks += removeSCCFromVDProj(f));
                            }
-                           catch (System.Exception)
+                           catch (Exception)
                            {
                               throw new Exception("Cannot get transaction details for " + version.Value.TrxId);
                            }
@@ -385,7 +385,7 @@ namespace Vault2Git.Lib
 
 
                         //commit
-                        ticks += gitCommit(info.Login, info.TrxId, this.GitDomainName,
+                        ticks += gitCommit(info.Login, info.TrxId, GitDomainName,
                                            buildCommitMessage(vaultRepoPath, version.Key, info), info.TimeStamp);
                         if (null != Progress)
                             if (Progress(version.Key, ticks))
@@ -609,13 +609,13 @@ namespace Vault2Git.Lib
               Console.WriteLine("Exception " + e.Message + " getting Version " + version + " from Vault repo. Waiting 5 secs and retrying...");
 
               // if an error occurs, wait and then retry the operation. We may be running too fast for Vault
-              System.Threading.Thread.Sleep(TimeSpan.FromSeconds(5.0));
+              Thread.Sleep(TimeSpan.FromSeconds(5.0));
 
               vaultProcessCommandGetVersion(repoPath, version, true);
            }
 
            //now process deletions, moves, and renames (due to vault bug)
-           var allowedRequests = new int[]
+           var allowedRequests = new[]
                                       {
                                           VaultRequestType.Delete,
                                           VaultRequestType.Move, 
@@ -628,7 +628,7 @@ namespace Vault2Git.Lib
               //check if it is within current branch
               if (item.ItemPath1.StartsWith(repoPath, StringComparison.CurrentCultureIgnoreCase))
               {
-                 var pathToDelete = Path.Combine(this.WorkingFolder, item.ItemPath1.Substring(repoPath.Length + 1));
+                 var pathToDelete = Path.Combine(WorkingFolder, item.ItemPath1.Substring(repoPath.Length + 1));
                  if (Verbose) Console.WriteLine("delete {0} => {1}", item.ItemPath1, pathToDelete);
                  if (File.Exists(pathToDelete))
                     File.Delete(pathToDelete);
@@ -653,7 +653,7 @@ namespace Vault2Git.Lib
            if (Verbose) Console.WriteLine("get {0} version {1} SUCCESS!", txdetailitem.ItemPath1, txdetailitem.Version);
 
            //now process deletions, moves, and renames (due to vault bug)
-           var allowedRequests = new int[]
+           var allowedRequests = new[]
                                       {
                                           VaultRequestType.Delete,
                                           VaultRequestType.Move, 
@@ -665,7 +665,7 @@ namespace Vault2Git.Lib
               //check if it is within current branch
               if (txdetailitem.ItemPath1.StartsWith(repoPath, StringComparison.CurrentCultureIgnoreCase))
               {
-                 var pathToDelete = Path.Combine(this.WorkingFolder, txdetailitem.ItemPath1.Substring(repoPath.Length + 1));
+                 var pathToDelete = Path.Combine(WorkingFolder, txdetailitem.ItemPath1.Substring(repoPath.Length + 1));
 
                  if (Verbose) Console.WriteLine("delete {0} => {1}", txdetailitem.ItemPath1, pathToDelete);
 
@@ -878,7 +878,7 @@ namespace Vault2Git.Lib
                   }
                }
             }
-            catch (System.InvalidOperationException)
+            catch (InvalidOperationException)
             {
                Console.WriteLine("Searched all commits and failed to find a restart point. Conversion will start from Version 1. Is this correct? Y/N");
                string input = Console.ReadLine();
@@ -900,7 +900,7 @@ namespace Vault2Git.Lib
             {
                 ticks += runGitCommand($"checkout --quiet --force {gitBranch}", string.Empty, out var msgs);
                 //confirm current branch (sometimes checkout failed)
-                ticks += this.gitCurrentBranch(out var currentBranch);
+                ticks += gitCurrentBranch(out var currentBranch);
                 if (gitBranch.Equals(currentBranch, StringComparison.OrdinalIgnoreCase))
                     break;
                 if (tries > 5)
@@ -960,7 +960,7 @@ namespace Vault2Git.Lib
             //parse path repo$RepoPath@version/trx
             var r = new StringBuilder(info.Comment);
             r.AppendLine();
-            r.AppendFormat("{4} {0}{1}@{2}/{3}", this.VaultRepository, repoPath, version, info.TrxId, VaultTag);
+            r.Append($"{VaultTag} {VaultRepository}{repoPath}@{version}/{info.TrxId}");
             r.AppendLine();
             return r.ToString();
         }
@@ -970,7 +970,7 @@ namespace Vault2Git.Lib
             //get last string
             var stringToParse = msg.Last();
             //search for version tag
-            var versionString = stringToParse.Split(new string[] {VaultTag}, StringSplitOptions.None).LastOrDefault();
+            var versionString = stringToParse.Split(new[] {VaultTag}, StringSplitOptions.None).LastOrDefault();
             //parse path reporepoPath@version/trx
             //get version/trx part
             var versionTrxTag = versionString?.Split('@').LastOrDefault();
@@ -1006,13 +1006,13 @@ namespace Vault2Git.Lib
 
             try
             {
-               ServerOperations.SetWorkingFolder(repoPath, this.WorkingFolder, true );
+               ServerOperations.SetWorkingFolder(repoPath, WorkingFolder, true );
             }
-            catch (VaultClientOperationsLib.WorkingFolderConflictException ex)
+            catch (WorkingFolderConflictException ex)
             {
                // Remove the working folder assignment and try again
                ServerOperations.RemoveWorkingFolder((string)ex.ConflictList[0]);
-               ServerOperations.SetWorkingFolder(repoPath, this.WorkingFolder, true );
+               ServerOperations.SetWorkingFolder(repoPath, WorkingFolder, true );
             }
             return Environment.TickCount - ticks;
         }
@@ -1023,10 +1023,8 @@ namespace Vault2Git.Lib
 
             //remove any assignment first
             //it is case sensitive, so we have to find how it is recorded first
-            var exPath = ServerOperations.GetWorkingFolderAssignments()
-                  .Cast<DictionaryEntry>()
-                  .Select(e => e.Key.ToString())
-                  .Where(e => repoPath.Equals(e, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+            var exPath = ServerOperations.GetWorkingFolderAssignments().Cast<DictionaryEntry>()
+                  .Select(e => e.Key.ToString()).FirstOrDefault(e => repoPath.Equals(e, StringComparison.OrdinalIgnoreCase));
             if (null != exPath)
                ServerOperations.RemoveWorkingFolder(exPath);
 
@@ -1040,10 +1038,8 @@ namespace Vault2Git.Lib
 
         private bool IsSetRootVaultWorkingFolder()
         {
-           var exPath = ServerOperations.GetWorkingFolderAssignments()
-                 .Cast<DictionaryEntry>()
-                 .Select(e => e.Key.ToString())
-                 .Where(e => "$".Equals(e, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+           var exPath = ServerOperations.GetWorkingFolderAssignments().Cast<DictionaryEntry>()
+                 .Select(e => e.Key.ToString()).FirstOrDefault(e => "$".Equals(e, StringComparison.OrdinalIgnoreCase));
            if (null == exPath)
            {
               Console.WriteLine("Root working folder is not set. It must be set so that files referred to outside of git repo may be retrieved. Will terminate on enter" );
@@ -1094,10 +1090,10 @@ namespace Vault2Git.Lib
         private int vaultLogin()
         {
             var ticks = Environment.TickCount;
-            ServerOperations.client.LoginOptions.URL = string.Format("http://{0}/VaultService", this.VaultServer);
-            ServerOperations.client.LoginOptions.User = this.VaultUser;
-            ServerOperations.client.LoginOptions.Password = this.VaultPassword;
-            ServerOperations.client.LoginOptions.Repository = this.VaultRepository;
+            ServerOperations.client.LoginOptions.URL = $"http://{VaultServer}/VaultService";
+            ServerOperations.client.LoginOptions.User = VaultUser;
+            ServerOperations.client.LoginOptions.Password = VaultPassword;
+            ServerOperations.client.LoginOptions.Repository = VaultRepository;
             ServerOperations.Login();
             ServerOperations.client.MakeBackups = false;
             ServerOperations.client.AutoCommit = false;

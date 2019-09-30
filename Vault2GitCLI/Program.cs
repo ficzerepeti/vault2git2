@@ -58,10 +58,10 @@ namespace Vault2Git.CLI
             Configuration configuration;
 
             Console.WriteLine("Vault2Git -- converting history from Vault repositories to Git");
-            System.Console.InputEncoding = System.Text.Encoding.UTF8;
+            Console.InputEncoding = System.Text.Encoding.UTF8;
 
             // First look for Config file in the current directory - allows for repository-based config files
-            string configPath = System.IO.Path.Combine(Environment.CurrentDirectory, "Vault2Git.exe.config");
+            string configPath = Path.Combine(Environment.CurrentDirectory, "Vault2Git.exe.config");
             if (File.Exists(configPath))
             {
                 var configFileMap = new ExeConfigurationFileMap {ExeConfigFilename = configPath};
@@ -77,7 +77,7 @@ namespace Vault2Git.CLI
                applicationName += ".exe";
             #endif
 
-               configPath = System.IO.Path.Combine(Environment.CurrentDirectory, applicationName);
+               configPath = Path.Combine(Environment.CurrentDirectory, applicationName);
                configuration = ConfigurationManager.OpenExeConfiguration(configPath);
             }
 
@@ -128,7 +128,7 @@ namespace Vault2Git.CLI
                Console.WriteLine(param.ToString());
             }
 
-            var processor = new Vault2Git.Lib.Processor
+            var processor = new Processor
             {
                 WorkingFolder = workingFolder,
                 GitCmd = appSettings.Settings["Convertor.GitCmd"].Value,
