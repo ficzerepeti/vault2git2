@@ -10,7 +10,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>Vault2Git.Lib</RootNamespace>
     <AssemblyName>Vault2GitLib</AssemblyName>
-    <TargetFrameworkVersion>v3.5</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <FileUpgradeFlags>
     </FileUpgradeFlags>
@@ -52,9 +52,8 @@
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="DragnetLib, Version=4.0.6.15954, Culture=neutral, PublicKeyToken=14a8075ce88af4e0, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>libs\VaultClientAPI_5_0_3_18802\DragnetLib.dll</HintPath>
+    <Reference Include="DragnetLib, Version=6.1.0.531, Culture=neutral, PublicKeyToken=14a8075ce88af4e0">
+      <HintPath>libs\VaultClientAPI_6_1_0_531\DragnetLib.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core">
@@ -68,25 +67,20 @@
     </Reference>
     <Reference Include="System.Data" />
     <Reference Include="System.Xml" />
-    <Reference Include="VaultClientIntegrationLib, Version=4.0.6.15954, Culture=neutral, PublicKeyToken=500623c275bd78a9, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>libs\VaultClientAPI_5_0_3_18802\VaultClientIntegrationLib.dll</HintPath>
+    <Reference Include="VaultClientIntegrationLib, Version=6.1.0.531, Culture=neutral, PublicKeyToken=500623c275bd78a9">
+      <HintPath>libs\VaultClientAPI_6_1_0_531\VaultClientIntegrationLib.dll</HintPath>
     </Reference>
-    <Reference Include="VaultClientNetLib, Version=4.0.6.15954, Culture=neutral, PublicKeyToken=e372e94840f8a4d3, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>libs\VaultClientAPI_5_0_3_18802\VaultClientNetLib.dll</HintPath>
+    <Reference Include="VaultClientNetLib, Version=6.1.0.531, Culture=neutral, PublicKeyToken=e372e94840f8a4d3">
+      <HintPath>libs\VaultClientAPI_6_1_0_531\VaultClientNetLib.dll</HintPath>
     </Reference>
-    <Reference Include="VaultClientOperationsLib, Version=4.0.6.15954, Culture=neutral, PublicKeyToken=e372e94840f8a4d3, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>libs\VaultClientAPI_5_0_3_18802\VaultClientOperationsLib.dll</HintPath>
+    <Reference Include="VaultClientOperationsLib, Version=6.1.0.531, Culture=neutral, PublicKeyToken=e372e94840f8a4d3">
+      <HintPath>libs\VaultClientAPI_6_1_0_531\VaultClientOperationsLib.dll</HintPath>
     </Reference>
-    <Reference Include="VaultLib, Version=4.0.6.15954, Culture=neutral, PublicKeyToken=a74d7badb9387c36, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>libs\VaultClientAPI_5_0_3_18802\VaultLib.dll</HintPath>
+    <Reference Include="VaultLib, Version=6.1.0.531, Culture=neutral, PublicKeyToken=a74d7badb9387c36">
+      <HintPath>libs\VaultClientAPI_6_1_0_531\VaultLib.dll</HintPath>
     </Reference>
-    <Reference Include="VCDiff, Version=4.0.6.15954, Culture=neutral, PublicKeyToken=4f75799f06837886, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>libs\VaultClientAPI_5_0_3_18802\VCDiff.dll</HintPath>
+    <Reference Include="VCDiff, Version=6.1.0.531, Culture=neutral, PublicKeyToken=4f75799f06837886">
+      <HintPath>libs\VaultClientAPI_6_1_0_531\VCDiff.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>
