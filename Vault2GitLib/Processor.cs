@@ -160,9 +160,8 @@ namespace Vault2Git.Lib
         /// </summary>
         /// <param name="git2vaultRepoPath">Key=git, Value=vault</param>
         /// <param name="limitCount"></param>
-        /// <param name="restartLimitCount"></param>
         /// <returns></returns>
-        public bool Pull(IEnumerable<KeyValuePair<string, string>> git2vaultRepoPath, long limitCount, long restartLimitCount)
+        public bool Pull(IEnumerable<KeyValuePair<string, string>> git2vaultRepoPath, long limitCount)
         {
             int ticks = 0;
 
@@ -195,15 +194,8 @@ namespace Vault2Git.Lib
                     //reset ticks
                     ticks = 0;
 
-                    if (restartLimitCount > 0)
-                    {
-                       //get current version
-                       ticks += gitVaultVersion(gitBranch, restartLimitCount, ref currentGitVaultVersion);
-                    }
-                    else
-                    {
-                       currentGitVaultVersion = 0;
-                    }
+                    //get current version
+                    ticks += gitVaultVersion(gitBranch, vaultRepoPath, ref currentGitVaultVersion);
 
                     //get vaultVersions
                     IDictionary<long, VaultVersionInfo> vaultVersions = new SortedList<long, VaultVersionInfo>();
@@ -419,8 +411,7 @@ namespace Vault2Git.Lib
 
                 //finalize git (update server info for dumb clients)
                 ticks += gitFinalize();
-                if (null != Progress)
-                   Progress(ProgressSpecialVersionFinalize, ticks);
+                Progress?.Invoke(ProgressSpecialVersionFinalize, ticks);
             }
             return false;
         }
@@ -852,37 +843,32 @@ namespace Vault2Git.Lib
             public DateTime TimeStamp;
         }
 
-        private int gitVaultVersion(string gitBranch, long restartLimitCount, ref long currentVersion)
+        private int gitVaultVersion(string gitBranch, string vaultRepoPath, ref long currentVersion)
         {
             var ticks = 0;
             currentVersion = 0;
-            int revision = 0;
             try
             {
-               while (currentVersion == 0 && revision < restartLimitCount)
-               {
-                  //get commit message
-                  ticks += gitLog(gitBranch, revision, out var msgs);
-                  //get vault version from commit message
-                  currentVersion = getVaultVersionFromGitLogMessage(msgs);
-                  revision++;
-               }
+               //get commit message
+               ticks += gitLog(gitBranch, vaultRepoPath, out var msgs);
+               //get vault version from commit message
+               currentVersion = getVaultVersionFromGitLogMessage(msgs);
 
                if (currentVersion == 0)
                {
                   Console.WriteLine("Restart limit exceeded. Conversion will start from Version 1. Is this correct? Y/N");
-                  string input = Console.ReadLine();
-                  if (!(input[0] == 'Y' || input[0] == 'y'))
+                  var input = Console.ReadLine();
+                  if (input != null && !(input[0] == 'Y' || input[0] == 'y'))
                   {
-                     throw new Exception("Restart commit message not located in git within {0} commits of HEAD " + restartLimitCount);
+                     throw new Exception("Restart commit message not located in git");
                   }
                }
             }
             catch (InvalidOperationException)
             {
                Console.WriteLine("Searched all commits and failed to find a restart point. Conversion will start from Version 1. Is this correct? Y/N");
-               string input = Console.ReadLine();
-               if (!(input[0] == 'Y' || input[0] == 'y'))
+               var input = Console.ReadLine();
+               if (input != null && !(input[0] == 'Y' || input[0] == 'y'))
                {
                   Environment.Exit(2);
                }
@@ -960,12 +946,13 @@ namespace Vault2Git.Lib
             //parse path repo$RepoPath@version/trx
             var r = new StringBuilder(info.Comment);
             r.AppendLine();
-            r.Append($"{VaultTag} {VaultRepository}{repoPath}@{version}/{info.TrxId}");
-            r.AppendLine();
+            r.AppendLine($"{BuildVaultTag(repoPath)}@{version}/{info.TrxId}");
             return r.ToString();
         }
 
-        private long getVaultVersionFromGitLogMessage(string[] msg)
+        private string BuildVaultTag(string repoPath) => $"{VaultTag} {VaultRepository}{repoPath}";
+
+        private long getVaultVersionFromGitLogMessage(IEnumerable<string> msg)
         {
             //get last string
             var stringToParse = msg.Last();
@@ -982,7 +969,7 @@ namespace Vault2Git.Lib
             return version;
         }
 
-        private int gitLog(string gitBranch, int gitRevision, out string[] msg) => runGitCommand($"show -s {gitBranch}~{gitRevision}", string.Empty, out msg);
+        private int gitLog(string gitBranch, string vaultRepoPath, out string[] msg) => runGitCommand($"log {gitBranch} --grep \"{Regex.Escape(BuildVaultTag(vaultRepoPath))}\" -n 1", string.Empty, out msg);
         private int gitAddTag(string gitTagName, string gitCommitId, string gitTagComment) => runGitCommand($@"tag {gitTagName} {gitCommitId} -a -m ""{gitTagComment}""", string.Empty, out _);
         private int gitReset() => runGitCommand("reset --hard", string.Empty, out _);
         private int gitClean() => runGitCommand("clean -f -x", string.Empty, out _);

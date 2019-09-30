@@ -14,8 +14,6 @@ namespace Vault2Git.CLI
         {
             [Option("limit", Default = 999999999, HelpText = "Max number of versions to take from Vault for each branch. Default all versions")]
             public int Limit { get; set; }
-            [Option("restart-limit", Default = 20, HelpText = "Max number of commits to search back in git for restart point for each branch. Default 20 commits. -ve value forces a start from first Vault revision")]
-            public int RestartLimit { get; set; }
             [Option("console-output", Default = false, HelpText = "Use console output (default=no output)")]
             public bool UseConsole { get; set; }
             [Option("caps-lock", Default = false, HelpText = "")]
@@ -39,7 +37,7 @@ namespace Vault2Git.CLI
             [Option("directories", HelpText = "Subdirectories to process within Sourcegear Vault repo", Separator = ';')]
             public IEnumerable<string> Directories { get; set; }
 
-            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(RestartLimit)}: {RestartLimit}, {nameof(UseConsole)}: {UseConsole}, {nameof(UseCapsLock)}: {UseCapsLock}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Pause)}: {Pause}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}";
+            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(UseConsole)}: {UseConsole}, {nameof(UseCapsLock)}: {UseCapsLock}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Pause)}: {Pause}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}";
         }
         
         private static bool _useCapsLock;
@@ -150,7 +148,7 @@ namespace Vault2Git.CLI
             {
                 git2VaultRepoPathsSubset[branch] = git2VaultRepoPaths[branch];
             }
-            processor.Pull(git2VaultRepoPathsSubset, param.Limit, param.RestartLimit);
+            processor.Pull(git2VaultRepoPathsSubset, param.Limit);
 
             if (!param.IgnoreLabels)
                 processor.CreateTagsFromLabels();
