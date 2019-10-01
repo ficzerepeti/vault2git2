@@ -116,13 +116,11 @@ namespace Vault2Git.CLI
 
             if (param.Verbose) 
             {
-               Console.WriteLine(param.ToString());
                Console.WriteLine($"GitCmd = {appSettings.Settings["Convertor.GitCmd"].Value}");
                Console.WriteLine($"GitDomainName = {appSettings.Settings["Git.DomainName"].Value}");
                Console.WriteLine($"VaultServer = {appSettings.Settings["Vault.Server"].Value}");
                Console.WriteLine($"VaultRepository = {appSettings.Settings["Vault.Repo"].Value}");
                Console.WriteLine($"VaultUser = {appSettings.Settings["Vault.User"].Value}" );
-               Console.WriteLine($"VaultPassword = {appSettings.Settings["Vault.Password"].Value}");
                Console.WriteLine(param.ToString());
             }
 
@@ -165,9 +163,8 @@ namespace Vault2Git.CLI
             Environment.Exit(-1);
         }
 
-        static bool ShowProgress(long version, int ticks)
+        static bool ShowProgress(long version, TimeSpan timeSpan)
         {
-            var timeSpan = TimeSpan.FromMilliseconds(ticks);
             if (_useConsole)
             {
                 switch (version)
