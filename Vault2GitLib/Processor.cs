@@ -209,12 +209,11 @@ namespace Vault2Git.Lib
                             return true;
 
                     var counter = 0;
-                    var movedRenamedPaths = new Dictionary<string, string>();
                     foreach (var txId in txIds)
                     {
                        var affectedSubdirs = new HashSet<string>();
                        var txnInfo = ServerOperations.ProcessCommandTxDetail(txId);
-                       movedRenamedPaths.Clear();
+                       var movedRenamedPaths = new Dictionary<string, string>();
                        // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
                        var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
                        
@@ -283,29 +282,24 @@ namespace Vault2Git.Lib
                              catch (Exception)
                              {
                                 var folderPath = Path.GetDirectoryName(txDetailItem.ItemPath1).ToForwardSlash();
-                                var folderVersion = vaultGetFolderVersion(folderPath, txId, txDetailItem.TxDate.AddDays(-1).ToShortDateString(), txDetailItem.TxDate.AddDays(1).ToShortDateString());
+                                var folderVersion = vaultGetFolderVersion(folderPath, txId);
                                 vaultGetVersion(folderPath, folderVersion.Value, false);
                              }
 
                              if (!File.Exists(txDetailItem.ItemPath1)) continue;
                         
                              // Remove Source Code Control
-                             //change all sln files
-                             if (txDetailItem.ItemPath1.EndsWith("sln", true, CultureInfo.CurrentCulture))
+                             switch (Path.GetExtension(txDetailItem.ItemPath1).ToLower())
                              {
-                                removeSCCFromSln(txDetailItem.ItemPath1);
-                             }
-
-                             //change all csproj files
-                             if (txDetailItem.ItemPath1.EndsWith("csproj", true, CultureInfo.CurrentCulture))
-                             {
-                                removeSCCFromCSProj(txDetailItem.ItemPath1);
-                             }
-
-                             //change all vdproj files
-                             if (txDetailItem.ItemPath1.EndsWith("vdproj", true, CultureInfo.CurrentCulture))
-                             {
-                                removeSCCFromVDProj(txDetailItem.ItemPath1);
+                                case ".sln":
+                                   removeSCCFromSln(txDetailItem.ItemPath1);
+                                   break;
+                                case ".csproj":
+                                   removeSCCFromCSProj(txDetailItem.ItemPath1);
+                                   break;
+                                case ".vdproj":
+                                   removeSCCFromVDProj(txDetailItem.ItemPath1);
+                                   break;
                              }
                           }
                        }
@@ -336,7 +330,7 @@ namespace Vault2Git.Lib
                                    Statics.DeleteWorkingDirectory(targetDirectory);
                                 }
                                 var folderPath = $"{vaultRepoPath}/{vaultSubdirectory}";
-                                var folderVersion = vaultGetFolderVersion(folderPath, txId, "1/1/1990", "1/1/2090");
+                                var folderVersion = vaultGetFolderVersion(folderPath, txId);
                                 if (folderVersion.HasValue)
                                 {
                                    vaultGetVersion(folderPath, folderVersion.Value, true);
@@ -356,9 +350,9 @@ namespace Vault2Git.Lib
                                 //remove temp files created by vault
                                 .Where(f => !f.Contains("~")).ToList().ForEach(f => ticks += removeSCCFromVDProj(f));
                           }
-                          catch (Exception)
+                          catch (Exception e)
                           {
-                             throw new Exception("Cannot get transaction details for " + txId);
+                             throw new Exception($"Cannot get transaction details for {txId}: {e}");
                           }
                        }
                         
@@ -414,12 +408,10 @@ namespace Vault2Git.Lib
         /// </summary>
         /// <param name="folderPath">Vault folder path</param>
         /// <param name="txId">transaction ID</param>
-        /// <param name="beginDate"></param>
-        /// <param name="endDate"></param>
         /// <returns>Version if there's a matching transaction ID. Null in case folder was created after searched transaction. Exception otherwise</returns>
-        private long? vaultGetFolderVersion(string folderPath, long txId, string beginDate, string endDate)
+        private long? vaultGetFolderVersion(string folderPath, long txId)
         {
-           var versions = ServerOperations.ProcessCommandHistory(folderPath, true, DateSortOption.desc, null, null, beginDate, endDate, null, null, -1, -1, 0);
+           var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(1990,1,1), new VaultDateTime(2090,1,1), 0);
            var vaultHistoryItem = versions.FirstOrDefault(x => x.TxID == txId);
            if (vaultHistoryItem != null)
            {
