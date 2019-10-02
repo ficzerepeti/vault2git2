@@ -42,51 +42,41 @@ namespace Vault2Git.Lib
             try
             {
                 //get commit message
-                gitLog(gitBranch, vaultTag, out var msgs);
+                GitLog(gitBranch, vaultTag, out var msgs);
                 //get vault version from commit message
-                currentVersion = getVaultTrxIdFromGitLogMessage(msgs);
+                currentVersion = GetVaultTrxIdFromGitLogMessage(msgs);
 
                 if (currentVersion == 0)
                 {
-                    Log.Warning("Restart limit exceeded. Conversion will start from Version 1. Is this correct? Y/N");
-                    var input = Console.ReadLine();
-                    if (input != null && !(input[0] == 'Y' || input[0] == 'y'))
-                    {
-                        throw new Exception("Restart commit message not located in git");
-                    }
+                    Log.Warning("Conversion will start from Version 0");
                 }
             }
             catch (InvalidOperationException)
             {
-                Log.Warning("Searched all commits and failed to find a restart point. Conversion will start from Version 1. Is this correct? Y/N");
-                var input = Console.ReadLine();
-                if (input != null && !(input[0] == 'Y' || input[0] == 'y'))
-                {
-                    Environment.Exit(2);
-                }
+                Log.Warning("Searched all commits and failed to find a restart point. Conversion will start from Version 0.");
             }
         }
 
         public string GitCommit(string author, string vaultCommitMessage, DateTime commitTimeStamp)
         {
-            this.GitCurrentBranch(out var gitCurrentBranch);
+            GitCurrentBranch(out var gitCurrentBranch);
 
-            runGitCommand("add --force --all .", string.Empty, out var msgs);
+            RunGitCommand("add --force --all .", string.Empty, out var msgs);
             if (SkipEmptyCommits)
             {
                 //checking status
-                runGitCommand("status --porcelain", string.Empty, out msgs);
+                RunGitCommand("status --porcelain", string.Empty, out msgs);
                 if (!msgs.Any())
                     return null;
             }
 
-            runGitCommand($@"commit --allow-empty --all --date=""{commitTimeStamp:s}"" --author=""{author} <{author}@{GitDomainName}>"" -F -", vaultCommitMessage, out msgs);
+            RunGitCommand($@"commit --allow-empty --all --date=""{commitTimeStamp:s}"" --author=""{author} <{author}@{GitDomainName}>"" -F -", vaultCommitMessage, out msgs);
             
             //call gc
             if (0 == ++_commitCount % GitGcInterval)
             {
                 var gcWatch = Stopwatch.StartNew();
-                runGitCommand("gc --auto", string.Empty, out _);
+                RunGitCommand("gc --auto", string.Empty, out _);
                 Log.Information($"gc took {gcWatch.Elapsed}");
             }
 
@@ -103,19 +93,19 @@ namespace Vault2Git.Lib
 
         public void GitCurrentBranch(out string currentBranch)
         {
-            runGitCommand("branch", string.Empty, out var msgs);
+            RunGitCommand("branch", string.Empty, out var msgs);
             currentBranch = msgs.FirstOrDefault(s => s.StartsWith("*"))?.Substring(1).Trim();
             currentBranch = currentBranch ?? "master";
         }
 
-        private void gitLog(string gitBranch, string vaultTag, out string[] msg) => runGitCommand($"log {gitBranch} --grep \"{Regex.Escape(vaultTag)}\" -n 1", string.Empty, out msg);
-        public void GitAddTag(string tagName, string gitCommitId, string comment) => runGitCommand($@"tag {tagName} {gitCommitId} -a -m ""{comment}""", string.Empty, out _);
-        public void GitCheckout(string branch) => runGitCommand($"checkout --quiet --force {branch}", string.Empty, out _);
+        private void GitLog(string gitBranch, string vaultTag, out string[] msg) => RunGitCommand($"log {gitBranch} --grep \"{Regex.Escape(vaultTag)}\" -n 1", string.Empty, out msg);
+        public void GitAddTag(string tagName, string gitCommitId, string comment) => RunGitCommand($@"tag {tagName} {gitCommitId} -a -m ""{comment}""", string.Empty, out _);
+        public void GitCheckout(string branch) => RunGitCommand($"checkout --quiet --force {branch}", string.Empty, out _);
 
-        public void GitFinalize() => runGitCommand("update-server-info", string.Empty, out _);
-        public void runGitCommand(string cmd, string stdInput, out string[] stdOutput) => runGitCommand(cmd, stdInput, out stdOutput, null);
+        public void GitFinalize() => RunGitCommand("update-server-info", string.Empty, out _);
+        private void RunGitCommand(string cmd, string stdInput, out string[] stdOutput) => RunGitCommand(cmd, stdInput, out stdOutput, null);
 
-        private void runGitCommand(string cmd, string stdInput, out string[] stdOutput, IDictionary<string, string> env)
+        private void RunGitCommand(string cmd, string stdInput, out string[] stdOutput, IDictionary<string, string> env)
         {
             var pi = new ProcessStartInfo(GitCmd, cmd)
             {
@@ -141,7 +131,7 @@ namespace Vault2Git.Lib
             }
         }
 
-        private long getVaultTrxIdFromGitLogMessage(IEnumerable<string> msg)
+        private long GetVaultTrxIdFromGitLogMessage(IEnumerable<string> msg)
         {
             //get last string
             var stringToParse = msg.Last();
