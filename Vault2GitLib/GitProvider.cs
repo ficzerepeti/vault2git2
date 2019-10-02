@@ -23,18 +23,21 @@ namespace Vault2Git.Lib
         /// <summary>
         /// path where conversion will take place. If it not already set as value working folder, it will be set automatically
         /// </summary>
-        public string WorkingFolder;
-        
-        /// <summary>
-        /// path to git.exe
-        /// </summary>
-        public string GitCmd;
-
-        public string GitDomainName;
-        public bool SkipEmptyCommits = false;
+        private readonly string _workingFolder;
+        private readonly string _pathToGitExe;
+        private readonly string _gitDomainName;
+        private readonly bool _skipEmptyCommits;
         private const int GitGcInterval = 200;
 
         private long _commitCount;
+
+        public GitProvider(string workingFolder, string pathToGitExe, string gitDomainName, bool skipEmptyCommits)
+        {
+            _workingFolder = workingFolder;
+            _pathToGitExe = pathToGitExe;
+            _gitDomainName = gitDomainName;
+            _skipEmptyCommits = skipEmptyCommits;
+        }
 
         public void GitVaultVersion(string gitBranch, string vaultTag, ref long currentVersion)
         {
@@ -62,7 +65,7 @@ namespace Vault2Git.Lib
             GitCurrentBranch(out var gitCurrentBranch);
 
             RunGitCommand("add --force --all .", string.Empty, out var msgs);
-            if (SkipEmptyCommits)
+            if (_skipEmptyCommits)
             {
                 //checking status
                 RunGitCommand("status --porcelain", string.Empty, out msgs);
@@ -70,7 +73,7 @@ namespace Vault2Git.Lib
                     return null;
             }
 
-            RunGitCommand($@"commit --allow-empty --all --date=""{commitTimeStamp:s}"" --author=""{author} <{author}@{GitDomainName}>"" -F -", vaultCommitMessage, out msgs);
+            RunGitCommand($@"commit --allow-empty --all --date=""{commitTimeStamp:s}"" --author=""{author} <{author}@{_gitDomainName}>"" -F -", vaultCommitMessage, out msgs);
             
             //call gc
             if (0 == ++_commitCount % GitGcInterval)
@@ -107,9 +110,9 @@ namespace Vault2Git.Lib
 
         private void RunGitCommand(string cmd, string stdInput, out string[] stdOutput, IDictionary<string, string> env)
         {
-            var pi = new ProcessStartInfo(GitCmd, cmd)
+            var pi = new ProcessStartInfo(_pathToGitExe, cmd)
             {
-                WorkingDirectory = WorkingFolder,
+                WorkingDirectory = _workingFolder,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardInput = true

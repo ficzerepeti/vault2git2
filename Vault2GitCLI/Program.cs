@@ -66,7 +66,7 @@ namespace Vault2Git.CLI
             Console.InputEncoding = System.Text.Encoding.UTF8;
 
             // First look for Config file in the current directory - allows for repository-based config files
-            string configPath = Path.Combine(Environment.CurrentDirectory, "Vault2Git.exe.config");
+            var configPath = Path.Combine(Environment.CurrentDirectory, "Vault2Git.exe.config");
             if (File.Exists(configPath))
             {
                 var configFileMap = new ExeConfigurationFileMap {ExeConfigFilename = configPath};
@@ -128,13 +128,10 @@ namespace Vault2Git.CLI
                Log.Information(param.ToString());
             }
 
-            var git = new GitProvider
-            {
-                WorkingFolder = workingFolder,
-                GitCmd = appSettings.Settings["Convertor.GitCmd"].Value,
-                GitDomainName = appSettings.Settings["Git.DomainName"].Value,
-                SkipEmptyCommits = param.SkipEmptyCommits,
-            };
+            var git = new GitProvider(workingFolder, 
+                appSettings.Settings["Convertor.GitCmd"].Value, 
+                appSettings.Settings["Git.DomainName"].Value,
+                param.SkipEmptyCommits);
             
             var vault = new VaultProvider(appSettings.Settings["Vault.Server"].Value,
                 appSettings.Settings["Vault.Repo"].Value, 
