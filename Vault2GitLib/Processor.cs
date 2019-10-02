@@ -8,7 +8,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using Serilog;
-using VaultClientIntegrationLib;
 using VaultLib;
 
 namespace Vault2Git.Lib
@@ -179,7 +178,7 @@ namespace Vault2Git.Lib
                         var perTransactionWatch = Stopwatch.StartNew();
 
                         var affectedSubdirs = new HashSet<string>();
-                        var txnInfo = ServerOperations.ProcessCommandTxDetail(txId);
+                        var txnInfo = _vault.GetTxInfo(txId);
                         var movedRenamedPaths = new Dictionary<string, string>();
                         // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
                         var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
@@ -467,24 +466,10 @@ namespace Vault2Git.Lib
             _vault.VaultLogin();
 
             // Search for all labels recursively
-            var objId = RepositoryUtil.FindVaultTreeObjectAtReposOrLocalPath(repositoryFolderPath).ID;
+            var objId = _vault.FindVaultTreeObjectAtReposOrLocalPath(repositoryFolderPath).ID;
 
-            ServerOperations.client.ClientInstance.BeginLabelQuery(repositoryFolderPath,
-                objId,
-                true, // get recursive
-                true, // get inherited
-                true, // get file items
-                true, // get folder items
-                0, // no limit on results
-                out _,
-                out var rowsRetRecur,
-                out var qryToken);
-
-
-            ServerOperations.client.ClientInstance.GetLabelQueryItems_Recursive(qryToken,
-                0,
-                rowsRetRecur,
-                out var labelItems);
+            _vault.BeginLabelQuery(repositoryFolderPath, objId, out _, out var rowsRetRecur, out var qryToken);
+            _vault.GetLabelQueryItems_Recursive(qryToken, 0, rowsRetRecur, out var labelItems);
 
             try
             {
@@ -510,7 +495,7 @@ namespace Vault2Git.Lib
             finally
             {
                 //complete
-                ServerOperations.client.ClientInstance.EndLabelQuery(qryToken);
+                _vault.EndLabelQuery(qryToken);
                 _vault.VaultLogout();
                 _git.GitFinalize();
             }

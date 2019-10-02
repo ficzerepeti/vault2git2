@@ -136,12 +136,10 @@ namespace Vault2Git.CLI
                 SkipEmptyCommits = param.SkipEmptyCommits,
             };
             
-            var vault = new VaultProvider{
-                VaultServer = appSettings.Settings["Vault.Server"].Value,
-                VaultRepository = appSettings.Settings["Vault.Repo"].Value,
-                VaultUser = appSettings.Settings["Vault.User"].Value,
-                VaultPassword = appSettings.Settings["Vault.Password"].Value,
-            };
+            var vault = new VaultProvider(appSettings.Settings["Vault.Server"].Value,
+                appSettings.Settings["Vault.Repo"].Value, 
+                appSettings.Settings["Vault.User"].Value, 
+                appSettings.Settings["Vault.Password"].Value);
             
             var processor = new Processor(git, vault)
             {

@@ -13,12 +13,17 @@ namespace Vault2Git.Lib
     {
         void VaultLogin();
         void VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, ISet<long> txIds, long currentGitVaultVersion);
+        TxInfo GetTxInfo(long txId);
         void VaultGetVersion(string vaultPath, long vaultVersion, bool recursive);
         long? VaultGetFolderVersion(string folderPath, long txId);
         void VaultLogout();
         void SetVaultWorkingFolder(string repoPath, string diskPath);
         void UnSetVaultWorkingFolder(string repoPath);
         bool IsSetRootVaultWorkingFolder();
+        void BeginLabelQuery(string itemPath, long objId, out int rowsRetrievedInherited, out int rowsRetrievedRecursive, out string qryToken);
+        void GetLabelQueryItems_Recursive(string qryToken, int begin, int end, out VaultLabelItemX[] vaultLabelItems);
+        VaultClientTreeObject FindVaultTreeObjectAtReposOrLocalPath(string testPath);
+        void EndLabelQuery(string qryToken);
         string VaultRepository { get; }
     }
     
@@ -26,10 +31,38 @@ namespace Vault2Git.Lib
     {
         private string _originalWorkingFolder;
         
-        public string VaultServer;
-        public string VaultUser;
-        public string VaultPassword;
-        public string VaultRepository { get; set; }
+        private readonly string _vaultServer;
+        private readonly string _vaultUser;
+        private readonly string _vaultPassword;
+
+        public VaultProvider(string vaultServer, string vaultRepository, string vaultUser, string vaultPassword)
+        {
+            _vaultServer = vaultServer;
+            VaultRepository = vaultRepository;
+            _vaultUser = vaultUser;
+            _vaultPassword = vaultPassword;
+        }
+
+        public void BeginLabelQuery(string itemPath, long objId, out int rowsRetrievedInherited, out int rowsRetrievedRecursive, out string qryToken) =>
+            ServerOperations.client.ClientInstance.BeginLabelQuery(itemPath,
+                objId,
+                true, // get recursive
+                true, // get inherited
+                true, // get file items
+                true, // get folder items
+                0, // no limit on results
+                out rowsRetrievedInherited,
+                out rowsRetrievedRecursive,
+                out qryToken);
+
+        public void GetLabelQueryItems_Recursive(string qryToken, int begin, int end, out VaultLabelItemX[] vaultLabelItems)
+            => ServerOperations.client.ClientInstance.GetLabelQueryItems_Recursive(qryToken, begin, end, out vaultLabelItems);
+
+        public VaultClientTreeObject FindVaultTreeObjectAtReposOrLocalPath(string testPath) => RepositoryUtil.FindVaultTreeObjectAtReposOrLocalPath(testPath);
+
+        public void EndLabelQuery(string qryToken) => ServerOperations.client.ClientInstance.EndLabelQuery(qryToken);
+
+        public string VaultRepository { get; }
 
         /// <summary>
         /// Gets a folder version for a transaction ID
@@ -67,6 +100,8 @@ namespace Vault2Git.Lib
                 }
             }
         }
+
+        public TxInfo GetTxInfo(long txId) => ServerOperations.ProcessCommandTxDetail(txId);
 
         public void VaultGetVersion(string vaultPath, long vaultVersion, bool recursive)
         {
@@ -143,9 +178,9 @@ namespace Vault2Git.Lib
 
         public void VaultLogin()
         {
-            ServerOperations.client.LoginOptions.URL = $"http://{VaultServer}/VaultService";
-            ServerOperations.client.LoginOptions.User = VaultUser;
-            ServerOperations.client.LoginOptions.Password = VaultPassword;
+            ServerOperations.client.LoginOptions.URL = $"http://{_vaultServer}/VaultService";
+            ServerOperations.client.LoginOptions.User = _vaultUser;
+            ServerOperations.client.LoginOptions.Password = _vaultPassword;
             ServerOperations.client.LoginOptions.Repository = VaultRepository;
             ServerOperations.Login();
             ServerOperations.client.MakeBackups = false;
