@@ -91,6 +91,7 @@
     <Compile Include="GitProvider.cs" />
     <Compile Include="Processor.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="VaultProvider.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="libs\DragnetLib.dll" />

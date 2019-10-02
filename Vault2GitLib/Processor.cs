@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -7,11 +6,10 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using VaultClientIntegrationLib;
-using VaultClientOperationsLib;
-using VaultLib;
 using System.Xml;
 using Serilog;
+using VaultClientIntegrationLib;
+using VaultLib;
 
 namespace Vault2Git.Lib
 {
@@ -101,13 +99,8 @@ namespace Vault2Git.Lib
         /// </summary>
         public string WorkingFolder;
 
-        private string _originalWorkingFolder;
         private string _originalGitBranch;
 
-        public string VaultServer;
-        public string VaultUser;
-        public string VaultPassword;
-        public string VaultRepository;
         public List<string> VaultSubdirectories;
 
         //flags
@@ -123,10 +116,12 @@ namespace Vault2Git.Lib
         public const string VaultTag = "[git-vault-id]";
 
         private readonly IGitProvider _git;
+        private readonly IVaultProvider _vault;
 
-        public Processor(IGitProvider git)
+        public Processor(IGitProvider git, IVaultProvider vault)
         {
             _git = git;
+            _vault = vault;
         }
 
         /// <summary>
@@ -146,7 +141,7 @@ namespace Vault2Git.Lib
 
             try
             {
-                VaultLogin();
+                _vault.VaultLogin();
                 foreach (var pair in targetList)
                 {
                     var perBranchWatch = Stopwatch.StartNew();
@@ -157,7 +152,7 @@ namespace Vault2Git.Lib
                     Log.Information($"\nProcessing git branch {gitBranch}");
 
                     Init(vaultRepoPath, gitBranch);
-                    if (!IsSetRootVaultWorkingFolder())
+                    if (!_vault.IsSetRootVaultWorkingFolder())
                     {
                         Environment.Exit(1);
                     }
@@ -169,7 +164,7 @@ namespace Vault2Git.Lib
                         long currentGitVaultVersion = 0; // TODO: this should become TxID
                         _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"), ref currentGitVaultVersion);
                         //get vaultVersions
-                        VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, txIds, currentGitVaultVersion);
+                        _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, txIds, currentGitVaultVersion);
                     }
 
                     //do init only if there is something to work on
@@ -252,13 +247,13 @@ namespace Vault2Git.Lib
                                         itemPath = txDetailItem.ItemPath1;
                                     }
 
-                                    VaultGetVersion(itemPath, txDetailItem.Version, false);
+                                    _vault.VaultGetVersion(itemPath, txDetailItem.Version, false);
                                 }
                                 catch (Exception)
                                 {
                                     var folderPath = Path.GetDirectoryName(txDetailItem.ItemPath1).ToForwardSlash();
-                                    var folderVersion = VaultGetFolderVersion(folderPath, txId);
-                                    VaultGetVersion(folderPath, folderVersion.Value, false);
+                                    var folderVersion = _vault.VaultGetFolderVersion(folderPath, txId);
+                                    _vault.VaultGetVersion(folderPath, folderVersion.Value, false);
                                 }
 
                                 if (!File.Exists(txDetailItem.ItemPath1)) continue;
@@ -307,10 +302,10 @@ namespace Vault2Git.Lib
                                     }
 
                                     var folderPath = $"{vaultRepoPath}/{vaultSubdirectory}";
-                                    var folderVersion = VaultGetFolderVersion(folderPath, txId);
+                                    var folderVersion = _vault.VaultGetFolderVersion(folderPath, txId);
                                     if (folderVersion.HasValue)
                                     {
-                                        VaultGetVersion(folderPath, folderVersion.Value, true);
+                                        _vault.VaultGetVersion(folderPath, folderVersion.Value, true);
                                     }
                                 }
 
@@ -368,36 +363,12 @@ namespace Vault2Git.Lib
                 Log.Information("\n");
 
                 //complete
-                VaultLogout();
+                _vault.VaultLogout();
 
                 //finalize git (update server info for dumb clients)
                 _git.GitFinalize();
                 Log.Information($"finalization took {finalizeWatch.Elapsed}");
             }
-        }
-
-        /// <summary>
-        /// Gets a folder version for a transaction ID
-        /// </summary>
-        /// <param name="folderPath">Vault folder path</param>
-        /// <param name="txId">transaction ID</param>
-        /// <returns>Version if there's a matching transaction ID. Null in case folder was created after searched transaction. Exception otherwise</returns>
-        private static long? VaultGetFolderVersion(string folderPath, long txId)
-        {
-            var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(1990, 1, 1), new VaultDateTime(2090, 1, 1), 0);
-            var vaultHistoryItem = versions.FirstOrDefault(x => x.TxID == txId);
-            if (vaultHistoryItem != null)
-            {
-                return vaultHistoryItem.Version;
-            }
-
-            var minTxId = versions.Min(x => x.TxID);
-            if (minTxId > txId)
-            {
-                return null;
-            }
-
-            throw new Exception($"No matching history item found for {folderPath} at transaction ID {txId}");
         }
 
 
@@ -484,19 +455,6 @@ namespace Vault2Git.Lib
             File.WriteAllLines(filePath, lines.Where(l => !l.Trim().StartsWith(@"""Scc")).ToArray(), Encoding.UTF8);
         }
 
-        private void VaultPopulateInfo(string repoPath, string subdirectory, ISet<long> txIds, long currentGitVaultVersion)
-        {
-            var beginDate = new VaultDateTime(1990, 1, 1);
-            var endDate = new VaultDateTime(2090, 1, 1);
-            foreach (var i in ServerOperations.ProcessCommandVersionHistory($"{repoPath}/{subdirectory}", 1, beginDate, endDate, 0))
-            {
-                if (i.TxID > currentGitVaultVersion)
-                {
-                    txIds.Add(i.TxID);
-                }
-            }
-        }
-
         /// <summary>
         /// Creates Git tags from Vault labels
         /// </summary>
@@ -506,7 +464,7 @@ namespace Vault2Git.Lib
         {
             var labelWatch = Stopwatch.StartNew();
             Log.Information("Creating tags from labels...");
-            VaultLogin();
+            _vault.VaultLogin();
 
             // Search for all labels recursively
             var objId = RepositoryUtil.FindVaultTreeObjectAtReposOrLocalPath(repositoryFolderPath).ID;
@@ -553,29 +511,9 @@ namespace Vault2Git.Lib
             {
                 //complete
                 ServerOperations.client.ClientInstance.EndLabelQuery(qryToken);
-                VaultLogout();
+                _vault.VaultLogout();
                 _git.GitFinalize();
             }
-        }
-
-        private static void VaultGetVersion(string vaultPath, long vaultVersion, bool recursive)
-        {
-            // Allow exception to percolate up. Presume its due to a file missing from the latest Version 
-            // that's in this Version. That is, this file is later deleted, moved or renamed.
-            // apply version to the repo folder
-            Log.Debug($"get {vaultPath} version {vaultVersion}");
-            GetOperations.ProcessCommandGetVersion(vaultPath, Convert.ToInt32(vaultVersion),
-                new GetOptions
-                {
-                    MakeWritable = MakeWritableType.MakeAllFilesWritable,
-                    Merge = MergeType.OverwriteWorkingCopy,
-                    OverrideEOL = VaultEOL.None,
-                    //remove working copy does not work -- bug http://support.sourcegear.com/viewtopic.php?f=5&t=11145
-                    PerformDeletions = PerformDeletionsType.RemoveWorkingCopy,
-                    SetFileTime = SetFileTimeType.Modification,
-                    Recursive = recursive
-                });
-            Log.Debug($"get {vaultPath} version {vaultVersion} SUCCESS!");
         }
 
         private static void ProcessFileItem(string vaultRepoPath, string workingFolder, VaultTxDetailHistoryItem txdetailitem, bool moveFiles)
@@ -718,7 +656,7 @@ namespace Vault2Git.Lib
         private void Init(string vaultRepoPath, string gitBranch)
         {
             //set working folder
-            SetVaultWorkingFolder(vaultRepoPath);
+            _vault.SetVaultWorkingFolder(vaultRepoPath, WorkingFolder);
             //checkout branch
             for (var tries = 0; tries <= 5; tries++)
             {
@@ -729,12 +667,6 @@ namespace Vault2Git.Lib
                     return;
             }
             throw new Exception("cannot switch branches");
-        }
-
-        private void VaultFinalize(string vaultRepoPath)
-        {
-            UnSetVaultWorkingFolder(vaultRepoPath);
-            _git.GitCheckout(_originalGitBranch); // Return to original Git branch
         }
 
         // vaultLogin is the user name as known in Vault e.g. 'robert' which needs to be mapped to rob.goodridge
@@ -748,72 +680,12 @@ namespace Vault2Git.Lib
             return r.ToString();
         }
 
-        private string BuildVaultTag(string repoPath) => $"{VaultTag} {VaultRepository}{repoPath}";
+        private string BuildVaultTag(string repoPath) => $"{VaultTag} {_vault.VaultRepository}{repoPath}";
 
-        private void SetVaultWorkingFolder(string repoPath)
+        private void VaultFinalize(string vaultRepoPath)
         {
-            // Save the current working folder
-            var list = ServerOperations.GetWorkingFolderAssignments();
-            foreach (DictionaryEntry dict in list)
-            {
-                if (dict.Key.ToString().Equals(repoPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    _originalWorkingFolder = dict.Value.ToString();
-                    break;
-                }
-            }
-
-            try
-            {
-                ServerOperations.SetWorkingFolder(repoPath, WorkingFolder, true);
-            }
-            catch (WorkingFolderConflictException ex)
-            {
-                // Remove the working folder assignment and try again
-                ServerOperations.RemoveWorkingFolder((string) ex.ConflictList[0]);
-                ServerOperations.SetWorkingFolder(repoPath, WorkingFolder, true);
-            }
+            _vault.UnSetVaultWorkingFolder(vaultRepoPath);
+            _git.GitCheckout(_originalGitBranch); // Return to original Git branch
         }
-
-        private void UnSetVaultWorkingFolder(string repoPath)
-        {
-            //remove any assignment first
-            //it is case sensitive, so we have to find how it is recorded first
-            var exPath = ServerOperations.GetWorkingFolderAssignments().Cast<DictionaryEntry>()
-                .Select(e => e.Key.ToString()).FirstOrDefault(e => repoPath.Equals(e, StringComparison.OrdinalIgnoreCase));
-            if (null != exPath)
-                ServerOperations.RemoveWorkingFolder(exPath);
-
-            if (_originalWorkingFolder != null)
-            {
-                ServerOperations.SetWorkingFolder(repoPath, _originalWorkingFolder, true);
-                _originalWorkingFolder = null;
-            }
-        }
-
-        private static bool IsSetRootVaultWorkingFolder()
-        {
-            var exPath = ServerOperations.GetWorkingFolderAssignments().Cast<DictionaryEntry>().Select(e => e.Key.ToString()).FirstOrDefault(e => "$".Equals(e, StringComparison.OrdinalIgnoreCase));
-            if (null == exPath)
-            {
-                Log.Information("Root working folder is not set. It must be set so that files referred to outside of git repo may be retrieved. Will terminate on enter");
-                return false;
-            }
-            return true;
-        }
-
-        private void VaultLogin()
-        {
-            ServerOperations.client.LoginOptions.URL = $"http://{VaultServer}/VaultService";
-            ServerOperations.client.LoginOptions.User = VaultUser;
-            ServerOperations.client.LoginOptions.Password = VaultPassword;
-            ServerOperations.client.LoginOptions.Repository = VaultRepository;
-            ServerOperations.Login();
-            ServerOperations.client.MakeBackups = false;
-            ServerOperations.client.AutoCommit = false;
-            ServerOperations.client.Verbose = true;
-        }
-
-        private void VaultLogout() => ServerOperations.Logout();
     }
 }
