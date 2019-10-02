@@ -11,6 +11,7 @@ using VaultClientIntegrationLib;
 using VaultClientOperationsLib;
 using VaultLib;
 using System.Xml;
+using Serilog;
 
 namespace Vault2Git.Lib
 {
@@ -94,12 +95,7 @@ namespace Vault2Git.Lib
 
     public class Processor
     {
-        /// <summary>
-        /// path to git.exe
-        /// </summary>
-        public string GitCmd;
-
-        /// <summary>
+       /// <summary>
         /// path where conversion will take place. If it not already set as value working folder, it will be set automatically
         /// </summary>
         public string WorkingFolder;
@@ -113,15 +109,7 @@ namespace Vault2Git.Lib
         public string VaultRepository;
         public List<string> VaultSubdirectories;
 
-        public string GitDomainName;
-
-        //callback
-        public Func<long, TimeSpan, bool> Progress;
-
         //flags
-        public bool SkipEmptyCommits = false;
-        public bool Verbose = false;
-        public bool Pause = false;
         public bool ForceFullFolderGet = false;
 
         //private vars
@@ -131,8 +119,7 @@ namespace Vault2Git.Lib
         private readonly IDictionary<long, HashSet<string>> _txidMappings = new Dictionary<long, HashSet<string>>();
 
         //constants
-        private const int GitGcInterval = 200;
-        private const string VaultTag = "[git-vault-id]";
+        public const string VaultTag = "[git-vault-id]";
 
         /// <summary>
         /// version number reported to <see cref="Progress"/> when init is complete
@@ -154,6 +141,13 @@ namespace Vault2Git.Lib
         /// </summary>
         public const int ProgressSpecialVersionTags = -3;
 
+        private readonly IGitProvider _git;
+
+        public Processor(IGitProvider git)
+        {
+           _git = git;
+        }
+
         /// <summary>
         /// Pulls versions
         /// </summary>
@@ -163,8 +157,8 @@ namespace Vault2Git.Lib
         public bool Pull(IEnumerable<KeyValuePair<string, string>> git2VaultRepoPath, long limitCount)
         {
             //get git current branch name
-            gitCurrentBranch(out OriginalGitBranch);
-            Console.WriteLine($"Starting git branch is {OriginalGitBranch}");
+            _git.GitCurrentBranch(out OriginalGitBranch);
+            Log.Information($"Starting git branch is {OriginalGitBranch}");
             
             //reorder target branches to start from current branch, so don't need to do checkout for first branch
             var targetList = git2VaultRepoPath.OrderByDescending(p => p.Key.Equals(OriginalGitBranch, StringComparison.CurrentCultureIgnoreCase));
@@ -179,7 +173,7 @@ namespace Vault2Git.Lib
                     var gitBranch = pair.Key;
                     var vaultRepoPath = pair.Value;
 
-                    Console.WriteLine($"\nProcessing git branch {gitBranch}");
+                    Log.Information($"\nProcessing git branch {gitBranch}");
                     
                     Init(vaultRepoPath, gitBranch);
                     if (!IsSetRootVaultWorkingFolder())
@@ -192,7 +186,7 @@ namespace Vault2Git.Lib
                     {
                        //get current Git version
                        long currentGitVaultVersion = 0; // TODO: this should become TxID
-                       gitVaultVersion(gitBranch, vaultRepoPath, vaultSubdirectory, ref currentGitVaultVersion);
+                       _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"), ref currentGitVaultVersion);
                        //get vaultVersions
                        vaultPopulateInfo(vaultRepoPath, vaultSubdirectory, txIds, currentGitVaultVersion);
                     }
@@ -201,10 +195,7 @@ namespace Vault2Git.Lib
                     if (!txIds.Any())
                         return false;
 
-                    //report init
-                    if (null != Progress)
-                        if (Progress(ProgressSpecialVersionInit, perBranchWatch.Elapsed))
-                            return true;
+                    Log.Information($"init took {perBranchWatch.Elapsed}");
 
                     var counter = 0;
                     foreach (var txId in txIds)
@@ -271,7 +262,7 @@ namespace Vault2Git.Lib
                              {
                                 if (movedRenamedPaths.TryGetValue(txDetailItem.ItemPath1, out var itemPath))
                                 {
-                                   if (Verbose) Console.WriteLine($"Handling rename/move from {txDetailItem.ItemPath1} to {itemPath}");
+                                   Log.Debug($"Handling rename/move from {txDetailItem.ItemPath1} to {itemPath}");
                                 }
                                 else
                                 {
@@ -356,31 +347,26 @@ namespace Vault2Git.Lib
                           }
                        }
 
-                       if (Pause)
-                       {
-                          Console.WriteLine("Pause before commit. Enter to continue.");
-                          Console.ReadLine();
-                       }
-
                        //commit
                        foreach (var affectedSubdir in affectedSubdirs)
                        {
                           var commitMsg = buildCommitMessage($"{vaultRepoPath}/{affectedSubdir}", txId, txnInfo.changesetComment);
-                           
-                          gitCommit(txnInfo.userlogin, txId, GitDomainName, commitMsg, new DateTime(txnInfo.items.First().ModDate.Ticks));
+                          var gitCommitId = _git.GitCommit(txnInfo.userlogin, commitMsg, new DateTime(txnInfo.items.First().ModDate.Ticks));
                           
-                          //call gc
-                          if (0 == ++counter % GitGcInterval)
+                          // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
+                          if (!string.IsNullOrEmpty(gitCommitId))
                           {
-                             var gcWatch = Stopwatch.StartNew();
-                             gitGC();
-                             if (null != Progress && Progress(ProgressSpecialVersionGc, gcWatch.Elapsed)) return true;
+                             if (!_txidMappings.TryGetValue(txId, out var gitCommitIds))
+                             {
+                                gitCommitIds = new HashSet<string>();
+                                _txidMappings[txId] = gitCommitIds;
+                             }
+
+                             gitCommitIds.Add(gitCommitId);
                           }
                        }
                        
-                       if (null != Progress)
-                          if (Progress(txId, perTransactionWatch.Elapsed))
-                             return true;
+                       Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}");
                        
                        //check if limit is reached
                        if (counter >= limitCount)
@@ -393,14 +379,14 @@ namespace Vault2Git.Lib
             finally
             {
                var finalizeWatch = Stopwatch.StartNew();
-               Console.WriteLine("\n");
+               Log.Information("\n");
 
                //complete
                 vaultLogout();
 
                 //finalize git (update server info for dumb clients)
-                gitFinalize();
-                Progress?.Invoke(ProgressSpecialVersionFinalize, finalizeWatch.Elapsed);
+                _git.GitFinalize();
+                Log.Information($"finalization took {finalizeWatch.Elapsed}");
             }
             return false;
         }
@@ -493,7 +479,7 @@ namespace Vault2Git.Lib
             }
             catch
             {
-                Console.WriteLine("Failed for {0}", filePath);
+                Log.Information("Failed for {0}", filePath);
                 throw;
             }
         }
@@ -530,7 +516,7 @@ namespace Vault2Git.Lib
         public bool CreateTagsFromLabels(string repositoryFolderPath = "$")
         {
             var labelWatch = Stopwatch.StartNew();
-            Console.WriteLine( "Creating tags from labels...");
+            Log.Information( "Creating tags from labels...");
             vaultLogin();
 
             // Search for all labels recursively
@@ -566,20 +552,20 @@ namespace Vault2Git.Lib
                      if (!string.IsNullOrEmpty(gitCommitId))
                      {
                         var gitLabelName = Regex.Replace(currItem.Label, "[\\W]", "_");
-                        gitAddTag(currItem.TxID + "_" + gitLabelName, gitCommitId, currItem.Comment);
+                        _git.GitAddTag($"{currItem.TxID}_{gitLabelName}", gitCommitId, currItem.Comment);
                      }
                   }
                }
 
                //add ticks for git tags
-               Progress?.Invoke(ProgressSpecialVersionTags, labelWatch.Elapsed);
+               Log.Information($"tags creation took {labelWatch.Elapsed}");
             }
             finally
             {
                //complete
                ServerOperations.client.ClientInstance.EndLabelQuery(qryToken);
                vaultLogout();
-               gitFinalize();
+               _git.GitFinalize();
             }
             return true;
         }
@@ -589,7 +575,7 @@ namespace Vault2Git.Lib
            // Allow exception to percolate up. Presume its due to a file missing from the latest Version 
            // that's in this Version. That is, this file is later deleted, moved or renamed.
            // apply version to the repo folder
-           if (Verbose) Console.WriteLine($"get {vaultPath} version {vaultVersion}");
+           Log.Debug($"get {vaultPath} version {vaultVersion}");
            GetOperations.ProcessCommandGetVersion(vaultPath, Convert.ToInt32(vaultVersion),
               new GetOptions
               {
@@ -601,7 +587,7 @@ namespace Vault2Git.Lib
                  SetFileTime = SetFileTimeType.Modification,
                  Recursive = recursive
               });
-           if (Verbose) Console.WriteLine($"get {vaultPath} version {vaultVersion} SUCCESS!");
+           Log.Debug($"get {vaultPath} version {vaultVersion} SUCCESS!");
         }
 
         private void ProcessFileItem( String vaultRepoPath, String workingFolder, VaultTxDetailHistoryItem txdetailitem, bool moveFiles )
@@ -615,20 +601,20 @@ namespace Vault2Git.Lib
             // we do not have the correct state of files outside the current branch.
             // If the target path is outside, ignore a file copy and delete a file move.
             // E.g. A Share can be shared outside of the branch we are working with
-            if (Verbose) Console.WriteLine($"Processing {ItemPath1} to {ItemPath2}. MoveFiles = {moveFiles})");
+            Log.Debug($"Processing {ItemPath1} to {ItemPath2}. MoveFiles = {moveFiles})");
             bool ItemPath1WithinCurrentBranch = ItemPath1.StartsWith(vaultRepoPath, true, CultureInfo.CurrentCulture);
             bool ItemPath2WithinCurrentBranch = ItemPath2.StartsWith(vaultRepoPath, true, CultureInfo.CurrentCulture);
 
             if (!ItemPath1WithinCurrentBranch)
             {
-               if (Verbose) Console.WriteLine("   Source file is outside of working folder. Error");
+               Log.Debug("   Source file is outside of working folder. Error");
                throw new FileNotFoundException($"Source file is outside the current branch: {ItemPath1}");
             }
 
             // Don't copy files outside of the branch
             if (!moveFiles && !ItemPath2WithinCurrentBranch)
             {
-               if (Verbose) Console.WriteLine("   Ignoring target file outside of working folder");
+               Log.Debug("   Ignoring target file outside of working folder");
                return;
             }
 
@@ -648,7 +634,7 @@ namespace Vault2Git.Lib
 
                if (ItemPath2WithinCurrentBranch && File.Exists(ItemPath2))
                {
-                  if (Verbose) Console.WriteLine("   Deleting {0}", ItemPath2 );
+                  Log.Debug($"   Deleting {ItemPath2}" );
                   File.Delete(ItemPath2);
                }
 
@@ -657,18 +643,18 @@ namespace Vault2Git.Lib
                   // If target is outside of current branch, just delete the source file
                   if (!ItemPath2WithinCurrentBranch)
                   {
-                     if (Verbose) Console.WriteLine("   Deleting {0}", ItemPath1);
+                     Log.Debug($"   Deleting {ItemPath1}");
                      File.Delete(ItemPath1);
                   }
                   else
                   {
-                     if (Verbose) Console.WriteLine("   Moving {0}", ItemPath2);
+                     Log.Debug($"   Moving {ItemPath2}");
                      File.Move(ItemPath1, ItemPath2);
                   }
                }
                else
                {
-                  if (Verbose) Console.WriteLine("   Copying {0} to [1]", ItemPath1, ItemPath2);
+                  Log.Debug($"   Copying {ItemPath1} to {ItemPath2}");
                   File.Copy(ItemPath1, ItemPath2);
                }
             }
@@ -747,37 +733,6 @@ namespace Vault2Git.Lib
            return false;
         }
 
-        private void gitVaultVersion(string gitBranch, string vaultRepoPath, string vaultSubdirectory, ref long currentVersion)
-        {
-            currentVersion = 0;
-            try
-            {
-               //get commit message
-               gitLog(gitBranch, $"{vaultRepoPath}/{vaultSubdirectory}", out var msgs);
-               //get vault version from commit message
-               currentVersion = getVaultTrxIdFromGitLogMessage(msgs);
-
-               if (currentVersion == 0)
-               {
-                  Console.WriteLine("Restart limit exceeded. Conversion will start from Version 1. Is this correct? Y/N");
-                  var input = Console.ReadLine();
-                  if (input != null && !(input[0] == 'Y' || input[0] == 'y'))
-                  {
-                     throw new Exception("Restart commit message not located in git");
-                  }
-               }
-            }
-            catch (InvalidOperationException)
-            {
-               Console.WriteLine("Searched all commits and failed to find a restart point. Conversion will start from Version 1. Is this correct? Y/N");
-               var input = Console.ReadLine();
-               if (input != null && !(input[0] == 'Y' || input[0] == 'y'))
-               {
-                  Environment.Exit(2);
-               }
-            }
-        }
-
         private void Init(string vaultRepoPath, string gitBranch)
         {
             //set working folder
@@ -785,9 +740,9 @@ namespace Vault2Git.Lib
             //checkout branch
             for (int tries = 0; ; tries++)
             {
-                runGitCommand($"checkout --quiet --force {gitBranch}", string.Empty, out _);
+               _git.GitCheckout(gitBranch);
                 //confirm current branch (sometimes checkout failed)
-                gitCurrentBranch(out var currentBranch);
+                _git.GitCurrentBranch(out var currentBranch);
                 if (gitBranch.Equals(currentBranch, StringComparison.OrdinalIgnoreCase))
                     break;
                 if (tries > 5)
@@ -798,44 +753,10 @@ namespace Vault2Git.Lib
         private void vaultFinalize(string vaultRepoPath)
         {
             unSetVaultWorkingFolder(vaultRepoPath);
-            runGitCommand($"checkout --quiet --force {OriginalGitBranch}", string.Empty, out _); // Return to original Git branch
+            _git.GitCheckout(OriginalGitBranch); // Return to original Git branch
         }
 
         // vaultLogin is the user name as known in Vault e.g. 'robert' which needs to be mapped to rob.goodridge
-        private void gitCommit(string vaultLogin, long vaultTrxid, string gitDomainName, string vaultCommitMessage, DateTime commitTimeStamp)
-        {
-            this.gitCurrentBranch(out var gitCurrentBranch);
-
-            runGitCommand("add --force --all .", string.Empty, out var msgs);
-            if (SkipEmptyCommits)
-            {
-                //checking status
-                runGitCommand("status --porcelain", string.Empty, out msgs);
-                if (!msgs.Any())
-                    return;
-            }
-            runGitCommand($@"commit --allow-empty --all --date=""{commitTimeStamp:s}"" --author=""{vaultLogin} <{vaultLogin}@{gitDomainName}>"" -F -", vaultCommitMessage, out msgs);
-
-            // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
-            if (msgs[0].StartsWith("[" + gitCurrentBranch))
-            {
-                var gitCommitId = msgs[0].Split(' ')[1];
-                gitCommitId = gitCommitId.Substring(0, gitCommitId.Length - 1);
-                if (!_txidMappings.TryGetValue(vaultTrxid, out var gitCommitIds))
-                {
-                   gitCommitIds = new HashSet<string>();
-                   _txidMappings[vaultTrxid] = gitCommitIds;
-                }
-                gitCommitIds.Add(gitCommitId);
-            }
-        }
-
-        private void gitCurrentBranch(out string currentBranch)
-        {
-            runGitCommand("branch", string.Empty, out var msgs);
-            currentBranch = msgs.FirstOrDefault(s => s.StartsWith("*"))?.Substring(1).Trim();
-            currentBranch = currentBranch ?? "master";
-        }
 
         private string buildCommitMessage(string repoPath, long trxId, string comment)
         {
@@ -847,28 +768,6 @@ namespace Vault2Git.Lib
         }
 
         private string BuildVaultTag(string repoPath) => $"{VaultTag} {VaultRepository}{repoPath}";
-
-        private long getVaultTrxIdFromGitLogMessage(IEnumerable<string> msg)
-        {
-            //get last string
-            var stringToParse = msg.Last();
-            //search for version tag
-            var versionString = stringToParse.Split(new[] {VaultTag}, StringSplitOptions.None).LastOrDefault();
-            //parse path reporepoPath@version/trx
-            //get version/trx part
-            var versionTrxTag = versionString?.Split('@').LastOrDefault();
-            if (versionTrxTag == null)
-                return 0;
-
-            //get version
-            long.TryParse(versionTrxTag, out var version);
-            return version;
-        }
-
-        private void gitLog(string gitBranch, string vaultRepoPath, out string[] msg) => runGitCommand($"log {gitBranch} --grep \"{Regex.Escape(BuildVaultTag(vaultRepoPath))}\" -n 1", string.Empty, out msg);
-        private void gitAddTag(string gitTagName, string gitCommitId, string gitTagComment) => runGitCommand($@"tag {gitTagName} {gitCommitId} -a -m ""{gitTagComment}""", string.Empty, out _);
-        private void gitGC() => runGitCommand("gc --auto", string.Empty, out _);
-        private void gitFinalize() => runGitCommand("update-server-info", string.Empty, out _);
 
         private void setVaultWorkingFolder(string repoPath)
         {
@@ -917,41 +816,13 @@ namespace Vault2Git.Lib
                  .Select(e => e.Key.ToString()).FirstOrDefault(e => "$".Equals(e, StringComparison.OrdinalIgnoreCase));
            if (null == exPath)
            {
-              Console.WriteLine("Root working folder is not set. It must be set so that files referred to outside of git repo may be retrieved. Will terminate on enter" );
+              Log.Information("Root working folder is not set. It must be set so that files referred to outside of git repo may be retrieved. Will terminate on enter" );
               Console.ReadLine();
 
               return false;
            }
 
            return true;
-        }
-
-        private void runGitCommand(string cmd, string stdInput, out string[] stdOutput) => runGitCommand(cmd, stdInput, out stdOutput, null);
-
-        private void runGitCommand(string cmd, string stdInput, out string[] stdOutput, IDictionary<string, string> env)
-        {
-            var pi = new ProcessStartInfo(GitCmd, cmd)
-                         {
-                             WorkingDirectory = WorkingFolder,
-                             UseShellExecute = false,
-                             RedirectStandardOutput = true,
-                             RedirectStandardInput = true
-                         };
-            //set env vars
-            if (null != env)
-                foreach (var e in env)
-                    pi.EnvironmentVariables.Add(e.Key, e.Value);
-            using (var p = new Process{ StartInfo = pi })
-            {
-                p.Start();
-                p.StandardInput.Write(stdInput);
-                p.StandardInput.Close();
-                var msgs = new List<string>();
-                while (!p.StandardOutput.EndOfStream)
-                    msgs.Add(p.StandardOutput.ReadLine());
-                stdOutput = msgs.ToArray();
-                p.WaitForExit();
-            }
         }
 
         private void vaultLogin()

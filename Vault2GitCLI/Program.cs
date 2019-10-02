@@ -4,6 +4,7 @@ using System.Configuration;
 using System.Linq;
 using System.IO;
 using CommandLine;
+using Serilog;
 using Vault2Git.Lib;
 
 namespace Vault2Git.CLI
@@ -14,10 +15,6 @@ namespace Vault2Git.CLI
         {
             [Option("limit", Default = 999999999, HelpText = "Max number of versions to take from Vault for each branch. Default all versions")]
             public int Limit { get; set; }
-            [Option("console-output", Default = false, HelpText = "Use console output (default=no output)")]
-            public bool UseConsole { get; set; }
-            [Option("caps-lock", Default = false, HelpText = "")]
-            public bool UseCapsLock { get; set; }
             [Option("skip-empty-commits", Default = false, HelpText = "Do not create empty commits in Git")]
             public bool SkipEmptyCommits { get; set; }
             [Option("ignore-labels", Default = false, HelpText = "Do not create Git tags from Vault labels")]
@@ -26,8 +23,6 @@ namespace Vault2Git.CLI
             public bool Verbose { get; set; }
             [Option("ForceFullFolderGet", Default = false, HelpText = "Every change set gets entire folder structure. Required for shared file updates to be picked up. Otherwise such changes will only be picked up when the entire folder is retrieved due to a subsequent changeset which necessitates a whole folder retrieval.")]
             public bool ForceFullFolderGet { get; set; }
-            [Option("pause", Default = false, HelpText = "Pause just before commit so local state may be checked")]
-            public bool Pause { get; set; }
             [Option("paths", HelpText = "paths to override setting in .config", Separator = ';')]
             public IEnumerable<string> Paths { get; set; }
             [Option("work", HelpText = "WorkingFolder to override setting in .config. --work=. is most common")]
@@ -37,11 +32,8 @@ namespace Vault2Git.CLI
             [Option("directories", HelpText = "Subdirectories to process within Sourcegear Vault repo", Separator = ';')]
             public IEnumerable<string> Directories { get; set; }
 
-            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(UseConsole)}: {UseConsole}, {nameof(UseCapsLock)}: {UseCapsLock}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Pause)}: {Pause}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}";
+            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}";
         }
-        
-        private static bool _useCapsLock;
-        private static bool _useConsole;
 
         /// <summary>
         /// The main entry point for the application.
@@ -53,9 +45,24 @@ namespace Vault2Git.CLI
             Parser.Default.ParseArguments<Params>(args)
                 .WithParsed(opts => param = opts)
                 .WithNotParsed(PrintErrorAndExit);
+            
+            if (param.Verbose)
+            {
+                Log.Logger = new LoggerConfiguration()
+                    .MinimumLevel.Verbose()
+                    .WriteTo.Console()
+                    .CreateLogger();
+            }
+            else
+            {
+                Log.Logger = new LoggerConfiguration()
+                    .WriteTo.Console()
+                    .CreateLogger();
+            }
+            
             Configuration configuration;
 
-            Console.WriteLine("Vault2Git -- converting history from Vault repositories to Git");
+            Log.Information("Vault2Git -- converting history from Vault repositories to Git");
             Console.InputEncoding = System.Text.Encoding.UTF8;
 
             // First look for Config file in the current directory - allows for repository-based config files
@@ -82,7 +89,7 @@ namespace Vault2Git.CLI
             // Get access to the AppSettings properties in the chosen config file
             var appSettings = (AppSettingsSection)configuration.GetSection("appSettings");
 
-            Console.WriteLine($"Using config file {configPath}");
+            Log.Information($"Using config file {configPath}");
 
             if (!param.Directories.Any())
             {
@@ -102,10 +109,7 @@ namespace Vault2Git.CLI
             }
             param.Branches = git2VaultRepoPaths.Keys;
 
-            Console.WriteLine("   use Vault2Git --help to get additional info");
-
-            _useConsole = param.UseConsole;
-            _useCapsLock = param.UseCapsLock;
+            Log.Information("   use Vault2Git --help to get additional info");
             var workingFolder = param.Work ?? appSettings.Settings["Convertor.WorkingFolder"].Value;
 
             // check working folder ends with trailing slash
@@ -116,27 +120,29 @@ namespace Vault2Git.CLI
 
             if (param.Verbose) 
             {
-               Console.WriteLine($"GitCmd = {appSettings.Settings["Convertor.GitCmd"].Value}");
-               Console.WriteLine($"GitDomainName = {appSettings.Settings["Git.DomainName"].Value}");
-               Console.WriteLine($"VaultServer = {appSettings.Settings["Vault.Server"].Value}");
-               Console.WriteLine($"VaultRepository = {appSettings.Settings["Vault.Repo"].Value}");
-               Console.WriteLine($"VaultUser = {appSettings.Settings["Vault.User"].Value}" );
-               Console.WriteLine(param.ToString());
+               Log.Information($"GitCmd = {appSettings.Settings["Convertor.GitCmd"].Value}");
+               Log.Information($"GitDomainName = {appSettings.Settings["Git.DomainName"].Value}");
+               Log.Information($"VaultServer = {appSettings.Settings["Vault.Server"].Value}");
+               Log.Information($"VaultRepository = {appSettings.Settings["Vault.Repo"].Value}");
+               Log.Information($"VaultUser = {appSettings.Settings["Vault.User"].Value}" );
+               Log.Information(param.ToString());
             }
 
-            var processor = new Processor
+            var git = new GitProvider
             {
                 WorkingFolder = workingFolder,
                 GitCmd = appSettings.Settings["Convertor.GitCmd"].Value,
                 GitDomainName = appSettings.Settings["Git.DomainName"].Value,
+                SkipEmptyCommits = param.SkipEmptyCommits,
+            };
+            
+            var processor = new Processor(git)
+            {
+                WorkingFolder = workingFolder,
                 VaultServer = appSettings.Settings["Vault.Server"].Value,
                 VaultRepository = appSettings.Settings["Vault.Repo"].Value,
                 VaultUser = appSettings.Settings["Vault.User"].Value,
                 VaultPassword = appSettings.Settings["Vault.Password"].Value,
-                Progress = ShowProgress,
-                SkipEmptyCommits = param.SkipEmptyCommits,
-                Verbose = param.Verbose,
-                Pause = param.Pause,
                 ForceFullFolderGet= param.ForceFullFolderGet,
                 VaultSubdirectories = param.Directories.ToList()
             };
@@ -161,33 +167,6 @@ namespace Vault2Git.CLI
                 Console.Error.WriteLine(error);
             }
             Environment.Exit(-1);
-        }
-
-        static bool ShowProgress(long version, TimeSpan timeSpan)
-        {
-            if (_useConsole)
-            {
-                switch (version)
-                {
-                    case Processor.ProgressSpecialVersionInit:
-                        Console.WriteLine($"init took {timeSpan}");
-                        break;
-                    case Processor.ProgressSpecialVersionGc:
-                        Console.WriteLine($"gc took {timeSpan}");
-                        break;
-                    case Processor.ProgressSpecialVersionFinalize:
-                        Console.WriteLine($"finalization took {timeSpan}");
-                        break;
-                    case Processor.ProgressSpecialVersionTags:
-                        Console.WriteLine($"tags creation took {timeSpan}");
-                        break;
-                    default:
-                        Console.WriteLine($"processing version {version} took {timeSpan}");
-                        break;
-                }
-            }
-
-            return _useCapsLock && Console.CapsLock; //cancel flag
         }
 
         static string RemoveTrailingSlash(string str) => str.EndsWith("/") ? str.Remove(str.Length - 1) : str;
