@@ -127,9 +127,9 @@ namespace Vault2Git.Lib
         /// Pulls versions
         /// </summary>
         /// <param name="git2VaultRepoPath">Key=git, Value=vault</param>
-        /// <param name="limitCount"></param>
+        /// <param name="maxTxCount"></param>
         /// <returns></returns>
-        public void Pull(IEnumerable<KeyValuePair<string, string>> git2VaultRepoPath, long limitCount)
+        public void Pull(IEnumerable<KeyValuePair<string, string>> git2VaultRepoPath, long? maxTxCount)
         {
             //get git current branch name
             _git.GitCurrentBranch(out _originalGitBranch);
@@ -349,7 +349,7 @@ namespace Vault2Git.Lib
                         Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}");
 
                         //check if limit is reached
-                        if (counter >= limitCount)
+                        if (maxTxCount.HasValue && counter >= maxTxCount)
                             break;
                     }
 

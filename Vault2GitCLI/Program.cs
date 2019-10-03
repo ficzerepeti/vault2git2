@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Configuration;
 using System.Linq;
 using System.IO;
+using System.Threading;
 using CommandLine;
 using Serilog;
 using Vault2Git.Lib;
@@ -13,8 +14,8 @@ namespace Vault2Git.CLI
     {
         class Params
         {
-            [Option("limit", Default = 999999999, HelpText = "Max number of versions to take from Vault for each branch. Default all versions")]
-            public int Limit { get; set; }
+            [Option("limit", Default = null, HelpText = "Max number of versions to take from Vault for each branch. Default all versions")]
+            public long? Limit { get; set; }
             [Option("skip-empty-commits", Default = false, HelpText = "Do not create empty commits in Git")]
             public bool SkipEmptyCommits { get; set; }
             [Option("ignore-labels", Default = false, HelpText = "Do not create Git tags from Vault labels")]
@@ -27,6 +28,8 @@ namespace Vault2Git.CLI
             public IEnumerable<string> Paths { get; set; }
             [Option("work", HelpText = "WorkingFolder to override setting in .config. --work=. is most common")]
             public string Work { get; set; }
+            [Option("run-continuously", Default = false, HelpText = "Keep running and attempt pulling in new commits until ctrl-c is pressed")]
+            public bool RunContinuously { get; set; }
             [Option("branches", Default = new []{"master"}, HelpText = "Git branches to process. May not be a superset of branches defined in config", Separator = ';')]
             public IEnumerable<string> Branches { get; set; }
             [Option("directories", HelpText = "Subdirectories to process within Sourcegear Vault repo", Separator = ';')]
@@ -59,11 +62,11 @@ namespace Vault2Git.CLI
                     .WriteTo.Console()
                     .CreateLogger();
             }
-            
-            Configuration configuration;
 
             Log.Information("Vault2Git -- converting history from Vault repositories to Git");
             Console.InputEncoding = System.Text.Encoding.UTF8;
+            
+            Configuration configuration;
 
             // First look for Config file in the current directory - allows for repository-based config files
             var configPath = Path.Combine(Environment.CurrentDirectory, "Vault2Git.exe.config");
@@ -118,15 +121,12 @@ namespace Vault2Git.CLI
                 workingFolder += '\\';
             }
 
-            if (param.Verbose) 
-            {
-               Log.Information($"GitCmd = {appSettings.Settings["Convertor.GitCmd"].Value}");
-               Log.Information($"GitDomainName = {appSettings.Settings["Git.DomainName"].Value}");
-               Log.Information($"VaultServer = {appSettings.Settings["Vault.Server"].Value}");
-               Log.Information($"VaultRepository = {appSettings.Settings["Vault.Repo"].Value}");
-               Log.Information($"VaultUser = {appSettings.Settings["Vault.User"].Value}" );
-               Log.Information(param.ToString());
-            }
+            Log.Information($"GitCmd = {appSettings.Settings["Convertor.GitCmd"].Value}");
+            Log.Information($"GitDomainName = {appSettings.Settings["Git.DomainName"].Value}");
+            Log.Information($"VaultServer = {appSettings.Settings["Vault.Server"].Value}");
+            Log.Information($"VaultRepository = {appSettings.Settings["Vault.Repo"].Value}");
+            Log.Information($"VaultUser = {appSettings.Settings["Vault.User"].Value}" );
+            Log.Information(param.ToString());
 
             var git = new GitProvider(workingFolder, 
                 appSettings.Settings["Convertor.GitCmd"].Value, 
@@ -150,7 +150,27 @@ namespace Vault2Git.CLI
             {
                 git2VaultRepoPathsSubset[branch] = git2VaultRepoPaths[branch];
             }
-            processor.Pull(git2VaultRepoPathsSubset, param.Limit);
+
+            if (param.RunContinuously)
+            {
+                var cancelKeyPressed = false;
+                Console.CancelKeyPress += delegate { cancelKeyPressed = true; Log.Information("Stop process requested"); };
+                var nextRun = DateTime.UtcNow;
+                do
+                {
+                    if (nextRun <= DateTime.UtcNow)
+                    {
+                        processor.Pull(git2VaultRepoPathsSubset, param.Limit);
+                        nextRun = DateTime.UtcNow.AddMinutes(1);
+                        Log.Information($"Next run scheduled for {nextRun}");
+                    }
+                    Thread.Sleep(TimeSpan.FromSeconds(1));
+                } while (!cancelKeyPressed);
+            }
+            else
+            {
+                processor.Pull(git2VaultRepoPathsSubset, param.Limit);
+            }
 
             if (!param.IgnoreLabels)
                 processor.CreateTagsFromLabels();
