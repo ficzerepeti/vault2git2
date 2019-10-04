@@ -166,10 +166,9 @@ namespace Vault2Git.Lib
                     {
                         foreach (var vaultSubdirectory in VaultSubdirectories.Where(subDir => !Directory.Exists(Path.Combine(WorkingFolder, subDir))))
                         {
-                            var fullVaultPath = $"{vaultRepoPath}/{vaultSubdirectory}";
-                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(fullVaultPath, _beginDate);
+                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(vaultRepoPath, vaultSubdirectory, _beginDate);
                             if (transactionDetail == null) continue;
-                            _vault.VaultGetVersion(fullVaultPath, transactionDetail.Version, true);
+                            _vault.VaultGetVersion($"{vaultRepoPath}/{vaultSubdirectory}", transactionDetail.Version, true);
                             GitCommit(new[] {transactionDetail}, doGitPush, vaultRepoPath, transactionDetail.TxId, gitBranch);
                         }
                     }
@@ -393,8 +392,7 @@ namespace Vault2Git.Lib
 
         private VaultTransactionDetail GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
         {
-            var folderPath = $"{vaultRepoPath}/{vaultSubdirectory}";
-            var folderVersion = _vault.VaultGetFolderVersionExactTxId(folderPath, _beginDate, txId);
+            var folderVersion = _vault.VaultGetFolderVersionExactTxId(vaultRepoPath, vaultSubdirectory, _beginDate, txId);
 
             if (folderVersion != null)
             {
@@ -405,7 +403,7 @@ namespace Vault2Git.Lib
                     Statics.DeleteWorkingDirectory(targetDirectory);
                 }
 
-                _vault.VaultGetVersion(folderPath, folderVersion.Version, true);
+                _vault.VaultGetVersion($"{vaultRepoPath}/{vaultSubdirectory}", folderVersion.Version, true);
 
                 var fsPath = Path.Combine(WorkingFolder, vaultSubdirectory);
                 //change all sln files
