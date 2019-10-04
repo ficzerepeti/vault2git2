@@ -21,7 +21,7 @@ namespace Vault2Git.Lib
     public interface IVaultProvider
     {
         void VaultLogin();
-        void VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, ISet<long> txIds, long currentGitVaultVersion);
+        void VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, DateTime beginDate, ISet<long> txIds, long currentGitVaultVersion);
         TxInfo GetTxInfo(long txId);
         void VaultGetVersion(string vaultPath, long vaultVersion, bool recursive);
         VaultTransactionDetail VaultGetFolderVersion(string folderPath, long txId);
@@ -97,11 +97,10 @@ namespace Vault2Git.Lib
             throw new Exception($"No matching history item found for {folderPath} at transaction ID {txId}");
         }
 
-        public void VaultPopulateInfo(string repoPath, string subdirectory, ISet<long> txIds, long currentGitVaultVersion)
+        public void VaultPopulateInfo(string repoPath, string subdirectory, DateTime beginDate, ISet<long> txIds, long currentGitVaultVersion)
         {
-            var beginDate = new VaultDateTime(1990, 1, 1);
             var endDate = new VaultDateTime(2090, 1, 1);
-            foreach (var i in ServerOperations.ProcessCommandVersionHistory($"{repoPath}/{subdirectory}", 1, beginDate, endDate, 0))
+            foreach (var i in ServerOperations.ProcessCommandVersionHistory($"{repoPath}/{subdirectory}", 1, new VaultDateTime(beginDate.Ticks), endDate, 0))
             {
                 if (i.TxID > currentGitVaultVersion)
                 {

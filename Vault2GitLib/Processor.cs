@@ -100,8 +100,9 @@ namespace Vault2Git.Lib
         public string WorkingFolder;
 
         private string _originalGitBranch;
+        private DateTime _beginDate;
 
-        public List<string> VaultSubdirectories;
+        public List<string> VaultSubdirectories = new List<string>{""};
 
         //flags
         public bool ForceFullFolderGet = false;
@@ -118,10 +119,11 @@ namespace Vault2Git.Lib
         private readonly IGitProvider _git;
         private readonly IVaultProvider _vault;
 
-        public Processor(IGitProvider git, IVaultProvider vault)
+        public Processor(IGitProvider git, IVaultProvider vault, DateTime beginDate)
         {
             _git = git;
             _vault = vault;
+            _beginDate = beginDate;
         }
 
         /// <summary>
@@ -164,7 +166,7 @@ namespace Vault2Git.Lib
                         long currentGitVaultVersion = 0; // TODO: this should become TxID
                         _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"), ref currentGitVaultVersion);
                         //get vaultVersions
-                        _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, txIds, currentGitVaultVersion);
+                        _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, _beginDate, txIds, currentGitVaultVersion);
                     }
 
                     Log.Information($"init took {perBranchWatch.Elapsed}");
@@ -185,6 +187,7 @@ namespace Vault2Git.Lib
 
                             if (string.IsNullOrEmpty(gitCommitId)) continue;
                             committedAnything = true;
+                            _beginDate = new DateTime(transactionDetail.CommitTime.Ticks);
 
                             // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
                             if (!_txidMappings.TryGetValue(txId, out var gitCommitIds))
@@ -247,6 +250,14 @@ namespace Vault2Git.Lib
                         continue;
                     }
 
+                    // In case begin date is after the subdirectory was created an initial full get is needed so diffs may be applied as usual.
+                    var workingDirWithSubdir = Path.Combine(WorkingFolder, vaultSubdirectory);
+                    if (!Directory.Exists(workingDirWithSubdir))
+                    {
+                        retVal[vaultSubdirectory] = GetVaultSubdirectory(vaultRepoPath, vaultSubdirectory, txId);
+                        continue;
+                    }
+
                     if (!retVal.TryGetValue(vaultSubdirectory, out var detail))
                     {
                         detail = new VaultTransactionDetail
@@ -260,17 +271,14 @@ namespace Vault2Git.Lib
 
                         retVal[vaultSubdirectory] = detail;
                     }
-                    
-                    var vaultPathWithSubdir = $"{vaultRepoPath}/{vaultSubdirectory}";
-                    var workingDirWithSubdir = Path.Combine(WorkingFolder, vaultSubdirectory);
 
+                    var vaultPathWithSubdir = $"{vaultRepoPath}/{vaultSubdirectory}";
                     switch (txDetailItem.RequestType)
                     {
                         // Do deletions, renames and moves ourselves
                         case VaultRequestType.Delete:
                         {
-                            var suffix = txDetailItem.ItemPath1.Substring(vaultPathWithSubdir.Length);
-                            var filesystemPath = Path.Combine(WorkingFolder, suffix);
+                            var filesystemPath = txDetailItem.ItemPath1.Replace(vaultRepoPath, WorkingFolder);
 
                             if (File.Exists(filesystemPath))
                             {
@@ -363,35 +371,48 @@ namespace Vault2Git.Lib
             var retVal = new Dictionary<string, VaultTransactionDetail>();
             foreach (var vaultSubdirectory in VaultSubdirectories)
             {
-                var folderPath = $"{vaultRepoPath}/{vaultSubdirectory}";
-                var folderVersion = _vault.VaultGetFolderVersion(folderPath, txId);
-                        
-                if (folderVersion == null) continue;
+                var transactionDetail = GetVaultSubdirectory(vaultRepoPath, vaultSubdirectory, txId);
+                if (transactionDetail != null)
+                {
+                    retVal[vaultSubdirectory] = transactionDetail;
+                }
+            }
 
+            return retVal.Values;
+        }
+
+        private VaultTransactionDetail GetVaultSubdirectory(string vaultRepoPath, string vaultSubdirectory, long txId)
+        {
+            var folderPath = $"{vaultRepoPath}/{vaultSubdirectory}";
+            var folderVersion = _vault.VaultGetFolderVersion(folderPath, txId);
+
+            if (folderVersion != null)
+            {
                 folderVersion.Subdirectory = vaultSubdirectory;
-                retVal[vaultSubdirectory] = folderVersion;
                 var targetDirectory = Path.Combine(WorkingFolder, vaultSubdirectory);
                 if (Directory.Exists(targetDirectory))
                 {
                     Statics.DeleteWorkingDirectory(targetDirectory);
                 }
+
                 _vault.VaultGetVersion(folderPath, folderVersion.Version, true);
+
+                var fsPath = Path.Combine(WorkingFolder, vaultSubdirectory);
+                //change all sln files
+                Directory.GetFiles(fsPath, "*.sln", SearchOption.AllDirectories)
+                    //remove temp files created by vault
+                    .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromSln);
+                //change all csproj files
+                Directory.GetFiles(fsPath, "*.csproj", SearchOption.AllDirectories)
+                    //remove temp files created by vault
+                    .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromCsProj);
+                //change all vdproj files
+                Directory.GetFiles(fsPath, "*.vdproj", SearchOption.AllDirectories)
+                    //remove temp files created by vault
+                    .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromVdProj);
             }
 
-            //change all sln files
-            Directory.GetFiles(WorkingFolder, "*.sln", SearchOption.AllDirectories)
-                //remove temp files created by vault
-                .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromSln);
-            //change all csproj files
-            Directory.GetFiles(WorkingFolder, "*.csproj", SearchOption.AllDirectories)
-                //remove temp files created by vault
-                .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromCsProj);
-            //change all vdproj files
-            Directory.GetFiles(WorkingFolder, "*.vdproj", SearchOption.AllDirectories)
-                //remove temp files created by vault
-                .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromVdProj);
-
-            return retVal.Values;
+            return folderVersion;
         }
 
         /// <summary>
