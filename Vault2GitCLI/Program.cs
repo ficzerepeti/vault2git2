@@ -37,7 +37,7 @@ namespace Vault2Git.CLI
             [Option("git-push-origin", Default = false, HelpText = "Git push origin")]
             public bool DoGitPushOrigin { get; set; }
             [Option("begin-date", Default = "1990-1-1", HelpText = "Date to start merge from")]
-            public DateTime BeginDate { get; set; }
+            public DateTime? BeginDate { get; set; }
 
             public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(RunContinuously)}: {RunContinuously}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}, {nameof(DoGitPushOrigin)}: {DoGitPushOrigin}, {nameof(BeginDate)}: {BeginDate}";
         }

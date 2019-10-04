@@ -100,6 +100,7 @@ namespace Vault2Git.Lib
         public string WorkingFolder;
 
         private string _originalGitBranch;
+        private readonly bool _mergeAllHistory;
         private DateTime _beginDate;
 
         public List<string> VaultSubdirectories = new List<string>{""};
@@ -119,11 +120,12 @@ namespace Vault2Git.Lib
         private readonly IGitProvider _git;
         private readonly IVaultProvider _vault;
 
-        public Processor(IGitProvider git, IVaultProvider vault, DateTime beginDate)
+        public Processor(IGitProvider git, IVaultProvider vault, DateTime? beginDate)
         {
             _git = git;
             _vault = vault;
-            _beginDate = beginDate;
+            _beginDate = beginDate ?? new DateTime(1990,1,1);
+            _mergeAllHistory = !beginDate.HasValue;
         }
 
         /// <summary>
@@ -158,12 +160,25 @@ namespace Vault2Git.Lib
                     {
                         Environment.Exit(1);
                     }
+                    
+                    // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
+                    if (!_mergeAllHistory)
+                    {
+                        foreach (var vaultSubdirectory in VaultSubdirectories.Where(subDir => !Directory.Exists(Path.Combine(WorkingFolder, subDir))))
+                        {
+                            var fullVaultPath = $"{vaultRepoPath}/{vaultSubdirectory}";
+                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(fullVaultPath, _beginDate);
+                            if (transactionDetail == null) continue;
+                            _vault.VaultGetVersion(fullVaultPath, transactionDetail.Version, true);
+                            GitCommit(new[] {transactionDetail}, doGitPush, vaultRepoPath, transactionDetail.TxId, gitBranch);
+                        }
+                    }
 
                     var txIds = new SortedSet<long>();
                     foreach (var vaultSubdirectory in VaultSubdirectories)
                     {
                         //get current Git version
-                        long currentGitVaultVersion = 0; // TODO: this should become TxID
+                        long currentGitVaultVersion = 0;
                         _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"), ref currentGitVaultVersion);
                         //get vaultVersions
                         _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, _beginDate, txIds, currentGitVaultVersion);
@@ -178,31 +193,8 @@ namespace Vault2Git.Lib
                         
                         ++counter;
 
-                        //commit
-                        var committedAnything = false;
-                        foreach (var transactionDetail in ProcessTransaction(vaultRepoPath, txId))
-                        {
-                            var commitMsg = BuildCommitMessage($"{vaultRepoPath}/{transactionDetail.Subdirectory}", txId, transactionDetail.Comment);
-                            var gitCommitId = _git.GitCommit(transactionDetail.Author, commitMsg, new DateTime(transactionDetail.CommitTime.Ticks), transactionDetail.Subdirectory);
-
-                            if (string.IsNullOrEmpty(gitCommitId)) continue;
-                            committedAnything = true;
-                            _beginDate = new DateTime(transactionDetail.CommitTime.Ticks);
-
-                            // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
-                            if (!_txidMappings.TryGetValue(txId, out var gitCommitIds))
-                            {
-                                gitCommitIds = new HashSet<string>();
-                                _txidMappings[txId] = gitCommitIds;
-                            }
-
-                            gitCommitIds.Add(gitCommitId);
-                        }
-
-                        if (doGitPush && committedAnything)
-                        {
-                            _git.GitPushOrigin(gitBranch);
-                        }
+                        var transactionDetails = ProcessTransaction(vaultRepoPath, txId);
+                        GitCommit(transactionDetails, doGitPush, vaultRepoPath, txId, gitBranch);
 
                         Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}");
 
@@ -228,13 +220,36 @@ namespace Vault2Git.Lib
             }
         }
 
+        private void GitCommit(IEnumerable<VaultTransactionDetail> transactionDetails, bool doGitPush, string vaultRepoPath, long txId, string gitBranch)
+        {
+            var committedAnything = false;
+            foreach (var transactionDetail in transactionDetails)
+            {
+                var commitMsg = BuildCommitMessage($"{vaultRepoPath}/{transactionDetail.Subdirectory}", txId, transactionDetail.Comment);
+                var gitCommitId = _git.GitCommit(transactionDetail.Author, commitMsg, new DateTime(transactionDetail.CommitTime.Ticks), transactionDetail.Subdirectory);
+
+                if (string.IsNullOrEmpty(gitCommitId)) continue;
+                committedAnything = true;
+                _beginDate = new DateTime(transactionDetail.CommitTime.Ticks);
+
+                // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
+                if (!_txidMappings.TryGetValue(txId, out var gitCommitIds))
+                {
+                    gitCommitIds = new HashSet<string>();
+                    _txidMappings[txId] = gitCommitIds;
+                }
+
+                gitCommitIds.Add(gitCommitId);
+            }
+
+            if (doGitPush && committedAnything)
+            {
+                _git.GitPushOrigin(gitBranch);
+            }
+        }
+
         private IEnumerable<VaultTransactionDetail> ProcessTransaction(string vaultRepoPath, long txId)
         {
-            if (ForceFullFolderGet)
-            {
-                return GetVaultSubdirectories(vaultRepoPath, txId);
-            }
-            
             try
             {
                 var retVal = new Dictionary<string, VaultTransactionDetail>();
@@ -250,28 +265,23 @@ namespace Vault2Git.Lib
                         continue;
                     }
 
-                    // In case begin date is after the subdirectory was created an initial full get is needed so diffs may be applied as usual.
+                    if (!retVal.TryGetValue(vaultSubdirectory, out _))
+                    {
+                        retVal[vaultSubdirectory] = ForceFullFolderGet
+                            ? GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId)
+                            : new VaultTransactionDetail
+                            {
+                                Author = txnInfo.userlogin,
+                                Comment = txnInfo.changesetComment,
+                                Subdirectory = vaultSubdirectory,
+                                CommitTime = txDetailItem.ModDate,
+                                Version = _vault.VaultGetFolderVersion($"{vaultRepoPath}/{vaultSubdirectory}", _beginDate, txId).Version,
+                                TxId = txId
+                            };
+                    }
+                    if (ForceFullFolderGet) continue;
+
                     var workingDirWithSubdir = Path.Combine(WorkingFolder, vaultSubdirectory);
-                    if (!Directory.Exists(workingDirWithSubdir))
-                    {
-                        retVal[vaultSubdirectory] = GetVaultSubdirectory(vaultRepoPath, vaultSubdirectory, txId);
-                        continue;
-                    }
-
-                    if (!retVal.TryGetValue(vaultSubdirectory, out var detail))
-                    {
-                        detail = new VaultTransactionDetail
-                        {
-                            Author = txnInfo.userlogin,
-                            Comment = txnInfo.changesetComment,
-                            Subdirectory = vaultSubdirectory,
-                            CommitTime = txDetailItem.ModDate,
-                            Version = _vault.VaultGetFolderVersion($"{vaultRepoPath}/{vaultSubdirectory}", txId).Version
-                        };
-
-                        retVal[vaultSubdirectory] = detail;
-                    }
-
                     var vaultPathWithSubdir = $"{vaultRepoPath}/{vaultSubdirectory}";
                     switch (txDetailItem.RequestType)
                     {
@@ -322,7 +332,7 @@ namespace Vault2Git.Lib
                     catch (Exception)
                     {
                         var folderPath = Path.GetDirectoryName(txDetailItem.ItemPath1).ToForwardSlash();
-                        var folderVersion = _vault.VaultGetFolderVersion(folderPath, txId).Version;
+                        var folderVersion = _vault.VaultGetFolderVersion(folderPath, _beginDate, txId).Version;
                         _vault.VaultGetVersion(folderPath, folderVersion, false);
                     }
 
@@ -356,7 +366,7 @@ namespace Vault2Git.Lib
                 // If we did not need this code then we would not need to use the Working Directory which would be a cleaner solution.
                 try
                 {
-                    return GetVaultSubdirectories(vaultRepoPath, txId);
+                    return GetVaultSubdirectoriesExactTxId(vaultRepoPath, txId);
                 }
                 catch (Exception e)
                 {
@@ -366,12 +376,12 @@ namespace Vault2Git.Lib
             }
         }
 
-        private IEnumerable<VaultTransactionDetail> GetVaultSubdirectories(string vaultRepoPath, long txId)
+        private IEnumerable<VaultTransactionDetail> GetVaultSubdirectoriesExactTxId(string vaultRepoPath, long txId)
         {
             var retVal = new Dictionary<string, VaultTransactionDetail>();
             foreach (var vaultSubdirectory in VaultSubdirectories)
             {
-                var transactionDetail = GetVaultSubdirectory(vaultRepoPath, vaultSubdirectory, txId);
+                var transactionDetail = GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId);
                 if (transactionDetail != null)
                 {
                     retVal[vaultSubdirectory] = transactionDetail;
@@ -381,10 +391,10 @@ namespace Vault2Git.Lib
             return retVal.Values;
         }
 
-        private VaultTransactionDetail GetVaultSubdirectory(string vaultRepoPath, string vaultSubdirectory, long txId)
+        private VaultTransactionDetail GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
         {
             var folderPath = $"{vaultRepoPath}/{vaultSubdirectory}";
-            var folderVersion = _vault.VaultGetFolderVersion(folderPath, txId);
+            var folderVersion = _vault.VaultGetFolderVersionExactTxId(folderPath, _beginDate, txId);
 
             if (folderVersion != null)
             {

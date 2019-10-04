@@ -16,6 +16,7 @@ namespace Vault2Git.Lib
         public string Comment;
         public string Author;
         public long Version;
+        public long TxId;
     }
     
     public interface IVaultProvider
@@ -24,7 +25,9 @@ namespace Vault2Git.Lib
         void VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, DateTime beginDate, ISet<long> txIds, long currentGitVaultVersion);
         TxInfo GetTxInfo(long txId);
         void VaultGetVersion(string vaultPath, long vaultVersion, bool recursive);
-        VaultTransactionDetail VaultGetFolderVersion(string folderPath, long txId);
+        VaultTransactionDetail VaultGetFolderVersion(string folderPath, DateTime beginDate, long txId);
+        VaultTransactionDetail VaultGetFolderVersionExactTxId(string folderPath, DateTime beginDate, long txId);
+        VaultTransactionDetail VaultGetFolderVersionNearestBeforeDate(string folderPath, DateTime endDate);
         void VaultLogout();
         void SetVaultWorkingFolder(string repoPath, string diskPath);
         void UnSetVaultWorkingFolder(string repoPath);
@@ -77,15 +80,16 @@ namespace Vault2Git.Lib
         /// Gets a folder version for a transaction ID
         /// </summary>
         /// <param name="folderPath">Vault folder path</param>
+        /// <param name="beginDate"></param>
         /// <param name="txId">transaction ID</param>
         /// <returns>Version if there's a matching transaction ID. Null in case folder was created after searched transaction. Exception otherwise</returns>
-        public VaultTransactionDetail VaultGetFolderVersion(string folderPath, long txId)
+        public VaultTransactionDetail VaultGetFolderVersion(string folderPath, DateTime beginDate, long txId)
         {
-            var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(1990, 1, 1), new VaultDateTime(2090, 1, 1), 0);
+            var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(beginDate.Ticks), new VaultDateTime(2090, 1, 1), 0);
             var vaultHistoryItem = versions.FirstOrDefault(x => x.TxID == txId);
             if (vaultHistoryItem != null)
             {
-                return new VaultTransactionDetail{Author = vaultHistoryItem.UserLogin, Comment = vaultHistoryItem.Comment, Subdirectory = folderPath, Version = vaultHistoryItem.Version, CommitTime = vaultHistoryItem.TxDate};
+                return new VaultTransactionDetail{Author = vaultHistoryItem.UserLogin, Comment = vaultHistoryItem.Comment, Subdirectory = folderPath, Version = vaultHistoryItem.Version, CommitTime = vaultHistoryItem.TxDate, TxId = txId};
             }
 
             var minTxId = versions.Min(x => x.TxID);
@@ -95,6 +99,20 @@ namespace Vault2Git.Lib
             }
 
             throw new Exception($"No matching history item found for {folderPath} at transaction ID {txId}");
+        }
+
+        public VaultTransactionDetail VaultGetFolderVersionExactTxId(string folderPath, DateTime beginDate, long txId)
+        {
+            var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(beginDate.Ticks), new VaultDateTime(2090, 1, 1), 0);
+            var vaultHistoryItem = versions.FirstOrDefault(x => x.TxID == txId);
+            return vaultHistoryItem != null ? new VaultTransactionDetail{Author = vaultHistoryItem.UserLogin, Comment = vaultHistoryItem.Comment, Subdirectory = folderPath, Version = vaultHistoryItem.Version, CommitTime = vaultHistoryItem.TxDate, TxId = txId} : null;
+        }
+
+        public VaultTransactionDetail VaultGetFolderVersionNearestBeforeDate(string folderPath, DateTime endDate)
+        {
+            var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(1990,1,1), new VaultDateTime(endDate.Ticks), 1);
+            var vaultHistoryItem = versions.FirstOrDefault();
+            return vaultHistoryItem != null ? new VaultTransactionDetail{Author = vaultHistoryItem.UserLogin, Comment = vaultHistoryItem.Comment, Subdirectory = folderPath, Version = vaultHistoryItem.Version, CommitTime = vaultHistoryItem.TxDate, TxId = vaultHistoryItem.TxID} : null;
         }
 
         public void VaultPopulateInfo(string repoPath, string subdirectory, DateTime beginDate, ISet<long> txIds, long currentGitVaultVersion)
