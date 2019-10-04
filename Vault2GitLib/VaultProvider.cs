@@ -9,13 +9,22 @@ using VaultLib;
 
 namespace Vault2Git.Lib
 {
+    public class VaultTransactionDetail
+    {
+        public string Subdirectory;
+        public VaultDateTime CommitTime;
+        public string Comment;
+        public string Author;
+        public long Version;
+    }
+    
     public interface IVaultProvider
     {
         void VaultLogin();
         void VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, ISet<long> txIds, long currentGitVaultVersion);
         TxInfo GetTxInfo(long txId);
         void VaultGetVersion(string vaultPath, long vaultVersion, bool recursive);
-        long? VaultGetFolderVersion(string folderPath, long txId);
+        VaultTransactionDetail VaultGetFolderVersion(string folderPath, long txId);
         void VaultLogout();
         void SetVaultWorkingFolder(string repoPath, string diskPath);
         void UnSetVaultWorkingFolder(string repoPath);
@@ -70,13 +79,13 @@ namespace Vault2Git.Lib
         /// <param name="folderPath">Vault folder path</param>
         /// <param name="txId">transaction ID</param>
         /// <returns>Version if there's a matching transaction ID. Null in case folder was created after searched transaction. Exception otherwise</returns>
-        public long? VaultGetFolderVersion(string folderPath, long txId)
+        public VaultTransactionDetail VaultGetFolderVersion(string folderPath, long txId)
         {
             var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(1990, 1, 1), new VaultDateTime(2090, 1, 1), 0);
             var vaultHistoryItem = versions.FirstOrDefault(x => x.TxID == txId);
             if (vaultHistoryItem != null)
             {
-                return vaultHistoryItem.Version;
+                return new VaultTransactionDetail{Author = vaultHistoryItem.UserLogin, Comment = vaultHistoryItem.Comment, Subdirectory = folderPath, Version = vaultHistoryItem.Version, CommitTime = vaultHistoryItem.TxDate};
             }
 
             var minTxId = versions.Min(x => x.TxID);

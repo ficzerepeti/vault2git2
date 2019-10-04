@@ -12,10 +12,11 @@ namespace Vault2Git.Lib
     {
         void GitVaultVersion(string gitBranch, string vaultTag, ref long currentVersion);
         void GitCurrentBranch(out string originalGitBranch);
-        string GitCommit(string author, string commitMsg, DateTime dateTime);
+        string GitCommit(string author, string commitMsg, DateTime dateTime, string subDir);
         void GitFinalize();
         void GitAddTag(string tagName, string gitCommitId, string comment);
         void GitCheckout(string branch);
+        void GitPushOrigin(string branch);
     }
 
     public class GitProvider : IGitProvider
@@ -60,11 +61,11 @@ namespace Vault2Git.Lib
             }
         }
 
-        public string GitCommit(string author, string vaultCommitMessage, DateTime commitTimeStamp)
+        public string GitCommit(string author, string vaultCommitMessage, DateTime commitTimeStamp, string subDir)
         {
             GitCurrentBranch(out var gitCurrentBranch);
 
-            RunGitCommand("add --force --all .", string.Empty, out var msgs);
+            RunGitCommand($"add --force --all -- {subDir}", string.Empty, out var msgs);
             if (_skipEmptyCommits)
             {
                 //checking status
@@ -104,11 +105,10 @@ namespace Vault2Git.Lib
         private void GitLog(string gitBranch, string vaultTag, out string[] msg) => RunGitCommand($"log {gitBranch} --grep \"{Regex.Escape(vaultTag)}\" -n 1", string.Empty, out msg);
         public void GitAddTag(string tagName, string gitCommitId, string comment) => RunGitCommand($@"tag {tagName} {gitCommitId} -a -m ""{comment}""", string.Empty, out _);
         public void GitCheckout(string branch) => RunGitCommand($"checkout --quiet --force {branch}", string.Empty, out _);
-
+        public void GitPushOrigin(string branch) => RunGitCommand($"push --set-upstream origin {branch}", string.Empty, out _);
         public void GitFinalize() => RunGitCommand("update-server-info", string.Empty, out _);
-        private void RunGitCommand(string cmd, string stdInput, out string[] stdOutput) => RunGitCommand(cmd, stdInput, out stdOutput, null);
 
-        private void RunGitCommand(string cmd, string stdInput, out string[] stdOutput, IDictionary<string, string> env)
+        private void RunGitCommand(string cmd, string stdInput, out string[] stdOutput)
         {
             var pi = new ProcessStartInfo(_pathToGitExe, cmd)
             {
@@ -117,10 +117,6 @@ namespace Vault2Git.Lib
                 RedirectStandardOutput = true,
                 RedirectStandardInput = true
             };
-            //set env vars
-            if (null != env)
-                foreach (var e in env)
-                    pi.EnvironmentVariables.Add(e.Key, e.Value);
             using (var p = new Process {StartInfo = pi})
             {
                 p.Start();

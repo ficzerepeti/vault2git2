@@ -34,8 +34,10 @@ namespace Vault2Git.CLI
             public IEnumerable<string> Branches { get; set; }
             [Option("directories", HelpText = "Subdirectories to process within Sourcegear Vault repo", Separator = ';')]
             public IEnumerable<string> Directories { get; set; }
+            [Option("git-push-origin", Default = false, HelpText = "Git push origin")]
+            public bool DoGitPushOrigin { get; set; }
 
-            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}";
+            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(RunContinuously)}: {RunContinuously}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}, {nameof(DoGitPushOrigin)}: {DoGitPushOrigin}";
         }
 
         /// <summary>
@@ -153,6 +155,7 @@ namespace Vault2Git.CLI
 
             if (param.RunContinuously)
             {
+                var consecutiveErrorCount = 0;
                 var cancelKeyPressed = false;
                 Console.CancelKeyPress += delegate { cancelKeyPressed = true; Log.Information("Stop process requested"); };
                 var nextRun = DateTime.UtcNow;
@@ -160,7 +163,21 @@ namespace Vault2Git.CLI
                 {
                     if (nextRun <= DateTime.UtcNow)
                     {
-                        processor.Pull(git2VaultRepoPathsSubset, param.Limit);
+                        try
+                        {
+                            processor.Pull(git2VaultRepoPathsSubset, param.Limit, param.DoGitPushOrigin);
+                            consecutiveErrorCount = 0;
+                        }
+                        catch (Exception e)
+                        {
+                            const int maxErrorCount = 3;
+                            Log.Warning($"Exception caught while pulling in new versions from vault. Current consecutive exception count: {consecutiveErrorCount}, max: {maxErrorCount}.\n{e}");
+                            if (++consecutiveErrorCount >= maxErrorCount)
+                            {
+                                Log.Fatal($"Exiting after {consecutiveErrorCount} consecutive errors");
+                                return -1 * consecutiveErrorCount;
+                            }
+                        }
                         nextRun = DateTime.UtcNow.AddMinutes(1);
                         Log.Information($"Next run scheduled for {nextRun}");
                     }
@@ -169,7 +186,7 @@ namespace Vault2Git.CLI
             }
             else
             {
-                processor.Pull(git2VaultRepoPathsSubset, param.Limit);
+                processor.Pull(git2VaultRepoPathsSubset, param.Limit, param.DoGitPushOrigin);
             }
 
             if (!param.IgnoreLabels)
