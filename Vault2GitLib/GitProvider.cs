@@ -65,7 +65,7 @@ namespace Vault2Git.Lib
         {
             GitCurrentBranch(out var gitCurrentBranch);
 
-            RunGitCommand($"add --force --all -- {subDir}", string.Empty, out var msgs);
+            RunGitCommand($"add --force --all -- \"{subDir}\"", string.Empty, out var msgs);
             if (_skipEmptyCommits)
             {
                 //checking status
