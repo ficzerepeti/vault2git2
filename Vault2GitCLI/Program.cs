@@ -38,6 +38,8 @@ namespace Vault2Git.CLI
             public bool DoGitPushOrigin { get; set; }
             [Option("begin-date", Default = "1990-1-1", HelpText = "Date to start merge from")]
             public DateTime? BeginDate { get; set; }
+            [Option("vault-password-from-stdin", Default = false, HelpText = "Whether to read vault password from config or from standard input")]
+            public bool VaultPasswordFromStdin { get; set; }
 
             public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(RunContinuously)}: {RunContinuously}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}, {nameof(DoGitPushOrigin)}: {DoGitPushOrigin}, {nameof(BeginDate)}: {BeginDate}";
         }
@@ -125,23 +127,22 @@ namespace Vault2Git.CLI
                 workingFolder += '\\';
             }
 
+            var vaultUser = appSettings.Settings["Vault.User"].Value;
             Log.Information($"GitCmd = {appSettings.Settings["Convertor.GitCmd"].Value}");
             Log.Information($"GitDomainName = {appSettings.Settings["Git.DomainName"].Value}");
             Log.Information($"VaultServer = {appSettings.Settings["Vault.Server"].Value}");
             Log.Information($"VaultRepository = {appSettings.Settings["Vault.Repo"].Value}");
-            Log.Information($"VaultUser = {appSettings.Settings["Vault.User"].Value}" );
+            Log.Information($"VaultUser = {vaultUser}" );
             Log.Information(param.ToString());
 
             var git = new GitProvider(workingFolder, 
                 appSettings.Settings["Convertor.GitCmd"].Value, 
                 appSettings.Settings["Git.DomainName"].Value,
                 param.SkipEmptyCommits);
-            
-            var vault = new VaultProvider(appSettings.Settings["Vault.Server"].Value,
-                appSettings.Settings["Vault.Repo"].Value, 
-                appSettings.Settings["Vault.User"].Value, 
-                appSettings.Settings["Vault.Password"].Value);
-            
+
+            var vaultPassword = param.VaultPasswordFromStdin ? ReadPasswordFromConsole(vaultUser) : appSettings.Settings["Vault.Password"].Value;
+            var vault = new VaultProvider(appSettings.Settings["Vault.Server"].Value, appSettings.Settings["Vault.Repo"].Value, vaultUser, vaultPassword);
+
             var processor = new Processor(git, vault, param.BeginDate)
             {
                 WorkingFolder = workingFolder,
@@ -206,6 +207,29 @@ namespace Vault2Git.CLI
             Environment.Exit(-1);
         }
 
-        static string RemoveTrailingSlash(string str) => str.EndsWith("/") ? str.Remove(str.Length - 1) : str;
+        private static string RemoveTrailingSlash(string str) => str.EndsWith("/") ? str.Remove(str.Length - 1) : str;
+        private static string ReadPasswordFromConsole(string vaultUser)
+        {
+            Log.Information($"Please enter your vault password for user {vaultUser}");
+            var pass = "";
+            do
+            {
+                var key = Console.ReadKey(true);
+                switch (key.Key)
+                {
+                    case ConsoleKey.Enter:
+                        Console.WriteLine();
+                        return pass;
+                    case ConsoleKey.Backspace when pass.Length > 0:
+                        pass = pass.Substring(0, pass.Length - 1);
+                        Console.Write("\b \b");
+                        break;
+                    default:
+                        pass += key.KeyChar;
+                        Console.Write(@"*");
+                        break;
+                }
+            } while (true);
+        }
     }
 }
