@@ -6,6 +6,8 @@ using System.IO;
 using System.Threading;
 using CommandLine;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using Vault2Git.Lib;
 
 namespace Vault2Git.CLI
@@ -54,20 +56,8 @@ namespace Vault2Git.CLI
             Parser.Default.ParseArguments<Params>(args)
                 .WithParsed(opts => param = opts)
                 .WithNotParsed(PrintErrorAndExit);
-            
-            if (param.Verbose)
-            {
-                Log.Logger = new LoggerConfiguration()
-                    .MinimumLevel.Verbose()
-                    .WriteTo.Console()
-                    .CreateLogger();
-            }
-            else
-            {
-                Log.Logger = new LoggerConfiguration()
-                    .WriteTo.Console()
-                    .CreateLogger();
-            }
+
+            Log.Logger = MakeLogger(param.Verbose);
 
             Log.Information("Vault2Git -- converting history from Vault repositories to Git");
             Console.InputEncoding = System.Text.Encoding.UTF8;
@@ -182,7 +172,7 @@ namespace Vault2Git.CLI
                             }
                         }
                         nextRun = DateTime.UtcNow.AddMinutes(1);
-                        Log.Information($"Next run scheduled for {nextRun}");
+                        Log.Information($"Next run scheduled for {nextRun:u}");
                     }
                     Thread.Sleep(TimeSpan.FromSeconds(1));
                 } while (!cancelKeyPressed);
@@ -230,6 +220,15 @@ namespace Vault2Git.CLI
                         break;
                 }
             } while (true);
+        }
+        private static Logger MakeLogger(bool verbose)
+        {
+            var logger = new LoggerConfiguration().WriteTo.Console(outputTemplate: "[{Timestamp:u} {Level:u5}] {Message:lj}{NewLine}{Exception}", standardErrorFromLevel:LogEventLevel.Error);
+            if (verbose)
+            {
+                logger.MinimumLevel.Verbose();
+            }
+            return logger.CreateLogger();
         }
     }
 }
