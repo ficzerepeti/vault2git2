@@ -261,7 +261,7 @@ namespace Vault2Git.Lib
                 var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
                 if (orderedItems.Any())
                 {
-                    Log.Debug($"Processing transaction ID {txId}: commit time: {orderedItems[0].ModDate}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}");
+                    Log.Debug($"Processing transaction ID {txId}: commit time: {orderedItems[0].TxDate}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}");
                 }
 
                 foreach (var txDetailItem in orderedItems)
@@ -280,7 +280,7 @@ namespace Vault2Git.Lib
                                 Author = txnInfo.userlogin,
                                 Comment = txnInfo.changesetComment,
                                 Subdirectory = vaultSubdirectory,
-                                CommitTime = txDetailItem.ModDate,
+                                CommitTime = txDetailItem.TxDate,
                                 Version = _vault.VaultGetFolderVersion($"{vaultRepoPath}/{vaultSubdirectory}", _beginDate, txId).Version,
                                 TxId = txId
                             };
