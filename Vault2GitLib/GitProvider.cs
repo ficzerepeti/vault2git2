@@ -10,7 +10,7 @@ namespace Vault2Git.Lib
 {
     public interface IGitProvider
     {
-        void GitVaultVersion(string gitBranch, string vaultTag, ref long currentVersion);
+        long GitVaultVersion(string gitBranch, string vaultTag);
         void GitCurrentBranch(out string originalGitBranch);
         string GitCommit(string author, string commitMsg, DateTime dateTime, string subDir);
         void GitFinalize();
@@ -40,24 +40,24 @@ namespace Vault2Git.Lib
             _skipEmptyCommits = skipEmptyCommits;
         }
 
-        public void GitVaultVersion(string gitBranch, string vaultTag, ref long currentVersion)
+        public long GitVaultVersion(string gitBranch, string vaultTag)
         {
-            currentVersion = 0;
             try
             {
                 //get commit message
                 GitLog(gitBranch, vaultTag, out var msgs);
                 //get vault version from commit message
-                currentVersion = GetVaultTrxIdFromGitLogMessage(msgs);
-
+                var currentVersion = GetVaultTrxIdFromGitLogMessage(msgs);
                 if (currentVersion == 0)
                 {
                     Log.Warning("Conversion will start from Version 0");
                 }
+                return currentVersion;
             }
             catch (InvalidOperationException)
             {
                 Log.Warning("Searched all commits and failed to find a restart point. Conversion will start from Version 0.");
+                return 0;
             }
         }
 

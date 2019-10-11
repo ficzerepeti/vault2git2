@@ -177,8 +177,7 @@ namespace Vault2Git.Lib
                     foreach (var vaultSubdirectory in VaultSubdirectories)
                     {
                         //get current Git version
-                        long currentGitVaultVersion = 0;
-                        _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"), ref currentGitVaultVersion);
+                        var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"));
                         //get vaultVersions
                         _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, _beginDate, txIds, currentGitVaultVersion);
                     }
@@ -229,7 +228,11 @@ namespace Vault2Git.Lib
 
                 if (string.IsNullOrEmpty(gitCommitId)) continue;
                 committedAnything = true;
-                _beginDate = new DateTime(transactionDetail.CommitTime.Ticks);
+                // Avoid moving back in time in case no commit was done after _beginDate and latest folder was checked out commit time may be older than _beginDate.
+                if (transactionDetail.CommitTime.Ticks > _beginDate.Ticks)
+                {
+                    _beginDate = new DateTime(transactionDetail.CommitTime.Ticks);
+                }
 
                 // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
                 if (!_txidMappings.TryGetValue(txId, out var gitCommitIds))
@@ -256,6 +259,10 @@ namespace Vault2Git.Lib
                 var txnInfo = _vault.GetTxInfo(txId);
                 // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
                 var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
+                if (orderedItems.Any())
+                {
+                    Log.Debug($"Processing transaction ID {txId}: commit time: {orderedItems[0].ModDate}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}");
+                }
 
                 foreach (var txDetailItem in orderedItems)
                 {
@@ -396,6 +403,7 @@ namespace Vault2Git.Lib
 
             if (folderVersion != null)
             {
+                Log.Debug($"Getting {vaultRepoPath}/{vaultSubdirectory} recursively. TxID: {txId}, Time: {folderVersion.CommitTime}, Version: {folderVersion.Version}, Comment: {folderVersion.Comment}, Author: {folderVersion.Author}");
                 folderVersion.Subdirectory = vaultSubdirectory;
                 var targetDirectory = Path.Combine(WorkingFolder, vaultSubdirectory);
                 if (Directory.Exists(targetDirectory))
