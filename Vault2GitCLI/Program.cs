@@ -163,13 +163,7 @@ namespace Vault2Git.CLI
                         }
                         catch (Exception e)
                         {
-                            const int maxErrorCount = 3;
-                            Log.Warning($"Exception caught while pulling in new versions from vault. Current consecutive exception count: {consecutiveErrorCount}, max: {maxErrorCount}.\n{e}");
-                            if (++consecutiveErrorCount >= maxErrorCount)
-                            {
-                                Log.Fatal($"Exiting after {consecutiveErrorCount} consecutive errors");
-                                return -1 * consecutiveErrorCount;
-                            }
+                            Log.Warning($"Exception caught while pulling in new versions from vault. Current consecutive exception count: {consecutiveErrorCount}.\n{e}");
                         }
                         nextRun = DateTime.UtcNow.AddMinutes(1);
                         Log.Information($"Next run scheduled for {nextRun:u}");
