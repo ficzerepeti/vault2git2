@@ -12,40 +12,8 @@ using Vault2Git.Lib;
 
 namespace Vault2Git.CLI
 {
-    static class Program
+    public static class Program
     {
-        class Params
-        {
-            [Option("limit", Default = null, HelpText = "Max number of versions to take from Vault for each branch. Default all versions")]
-            public long? Limit { get; set; }
-            [Option("skip-empty-commits", Default = false, HelpText = "Do not create empty commits in Git")]
-            public bool SkipEmptyCommits { get; set; }
-            [Option("ignore-labels", Default = false, HelpText = "Do not create Git tags from Vault labels")]
-            public bool IgnoreLabels { get; set; }
-            [Option("verbose", Default = false, HelpText = "Output detailed messages")]
-            public bool Verbose { get; set; }
-            [Option("ForceFullFolderGet", Default = false, HelpText = "Every change set gets entire folder structure. Required for shared file updates to be picked up. Otherwise such changes will only be picked up when the entire folder is retrieved due to a subsequent changeset which necessitates a whole folder retrieval.")]
-            public bool ForceFullFolderGet { get; set; }
-            [Option("paths", HelpText = "paths to override setting in .config", Separator = ';')]
-            public IEnumerable<string> Paths { get; set; }
-            [Option("work", HelpText = "WorkingFolder to override setting in .config. --work=. is most common")]
-            public string Work { get; set; }
-            [Option("run-continuously", Default = false, HelpText = "Keep running and attempt pulling in new commits until ctrl-c is pressed")]
-            public bool RunContinuously { get; set; }
-            [Option("branches", Default = new []{"master"}, HelpText = "Git branches to process. May not be a superset of branches defined in config", Separator = ';')]
-            public IEnumerable<string> Branches { get; set; }
-            [Option("directories", HelpText = "Subdirectories to process within Sourcegear Vault repo", Separator = ';')]
-            public IEnumerable<string> Directories { get; set; }
-            [Option("git-push-origin", Default = false, HelpText = "Git push origin")]
-            public bool DoGitPushOrigin { get; set; }
-            [Option("begin-date", Default = "1990-1-1", HelpText = "Date to start merge from")]
-            public DateTime? BeginDate { get; set; }
-            [Option("vault-password-from-stdin", Default = false, HelpText = "Whether to read vault password from config or from standard input")]
-            public bool VaultPasswordFromStdin { get; set; }
-
-            public override string ToString() => $"{nameof(Limit)}: {Limit}, {nameof(SkipEmptyCommits)}: {SkipEmptyCommits}, {nameof(IgnoreLabels)}: {IgnoreLabels}, {nameof(Verbose)}: {Verbose}, {nameof(ForceFullFolderGet)}: {ForceFullFolderGet}, {nameof(Paths)}: {string.Join(",", Paths)}, {nameof(Work)}: {Work}, {nameof(RunContinuously)}: {RunContinuously}, {nameof(Branches)}: {string.Join(",", Branches)}, {nameof(Directories)}: {string.Join(",", Directories)}, {nameof(DoGitPushOrigin)}: {DoGitPushOrigin}, {nameof(BeginDate)}: {BeginDate}";
-        }
-
         /// <summary>
         /// The main entry point for the application.
         /// </summary>
@@ -85,20 +53,11 @@ namespace Vault2Git.CLI
                configuration = ConfigurationManager.OpenExeConfiguration(configPath);
             }
 
-            // Get access to the AppSettings properties in the chosen config file
-            var appSettings = (AppSettingsSection)configuration.GetSection("appSettings");
-
             Log.Information($"Using config file {configPath}");
 
-            if (!param.Directories.Any())
-            {
-                param.Directories = appSettings.Settings["Convertor.Directories"].Value.Split(';').ToList();
-            }
-            if (!param.Paths.Any())
-            {
-                param.Paths = appSettings.Settings["Convertor.Paths"].Value.Split(';').ToList();
-            }
-            
+            // Get access to the AppSettings properties in the chosen config file
+            param.ApplyAppConfigIfParamNotPresent((AppSettingsSection)configuration.GetSection("appSettings"));
+
             var git2VaultRepoPaths = param.Paths.ToDictionary(pair => RemoveTrailingSlash(pair.Split('~')[1]),
                 pair => RemoveTrailingSlash(pair.Split('~')[0]));
             if (!git2VaultRepoPaths.Keys.All(p => param.Branches.Contains(p)))
@@ -109,33 +68,21 @@ namespace Vault2Git.CLI
             param.Branches = git2VaultRepoPaths.Keys;
 
             Log.Information("   use Vault2Git --help to get additional info");
-            var workingFolder = param.Work ?? appSettings.Settings["Convertor.WorkingFolder"].Value;
 
             // check working folder ends with trailing slash
-            if (workingFolder.Last() != '\\')
+            if (param.WorkingFolder.Last() != '\\')
             {
-                workingFolder += '\\';
+                param.WorkingFolder += '\\';
             }
 
-            var vaultUser = appSettings.Settings["Vault.User"].Value;
-            Log.Information($"GitCmd = {appSettings.Settings["Convertor.GitCmd"].Value}");
-            Log.Information($"GitDomainName = {appSettings.Settings["Git.DomainName"].Value}");
-            Log.Information($"VaultServer = {appSettings.Settings["Vault.Server"].Value}");
-            Log.Information($"VaultRepository = {appSettings.Settings["Vault.Repo"].Value}");
-            Log.Information($"VaultUser = {vaultUser}" );
             Log.Information(param.ToString());
 
-            var git = new GitProvider(workingFolder, 
-                appSettings.Settings["Convertor.GitCmd"].Value, 
-                appSettings.Settings["Git.DomainName"].Value,
-                param.SkipEmptyCommits);
-
-            var vaultPassword = param.VaultPasswordFromStdin ? ReadPasswordFromConsole(vaultUser) : appSettings.Settings["Vault.Password"].Value;
-            var vault = new VaultProvider(appSettings.Settings["Vault.Server"].Value, appSettings.Settings["Vault.Repo"].Value, vaultUser, vaultPassword);
+            var git = new GitProvider(param.WorkingFolder, param.GitCmd, param.GitDomainName, param.SkipEmptyCommits);
+            var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword);
 
             var processor = new Processor(git, vault, param.BeginDate)
             {
-                WorkingFolder = workingFolder,
+                WorkingFolder = param.WorkingFolder,
                 ForceFullFolderGet= param.ForceFullFolderGet,
                 VaultSubdirectories = param.Directories.ToList()
             };
@@ -192,29 +139,7 @@ namespace Vault2Git.CLI
         }
 
         private static string RemoveTrailingSlash(string str) => str.EndsWith("/") ? str.Remove(str.Length - 1) : str;
-        private static string ReadPasswordFromConsole(string vaultUser)
-        {
-            Log.Information($"Please enter your vault password for user {vaultUser}");
-            var pass = "";
-            do
-            {
-                var key = Console.ReadKey(true);
-                switch (key.Key)
-                {
-                    case ConsoleKey.Enter:
-                        Console.WriteLine();
-                        return pass;
-                    case ConsoleKey.Backspace when pass.Length > 0:
-                        pass = pass.Substring(0, pass.Length - 1);
-                        Console.Write("\b \b");
-                        break;
-                    default:
-                        pass += key.KeyChar;
-                        Console.Write(@"*");
-                        break;
-                }
-            } while (true);
-        }
+
         private static Logger MakeLogger(bool verbose)
         {
             var logger = new LoggerConfiguration().WriteTo.Console(outputTemplate: "[{Timestamp:u} {Level:u5}] {Message:lj}{NewLine}{Exception}", standardErrorFromLevel:LogEventLevel.Error);
