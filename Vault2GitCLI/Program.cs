@@ -67,8 +67,6 @@ namespace Vault2Git.CLI
             }
             param.Branches = git2VaultRepoPaths.Keys;
 
-            Log.Information("   use Vault2Git --help to get additional info");
-
             // check working folder ends with trailing slash
             if (param.WorkingFolder.Last() != '\\')
             {
