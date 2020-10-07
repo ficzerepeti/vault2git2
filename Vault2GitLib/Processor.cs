@@ -266,7 +266,8 @@ namespace Vault2Git.Lib
 
                 foreach (var txDetailItem in orderedItems)
                 {
-                    if (!TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath1, out var vaultSubdirectory))
+                    if (!TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath1, out var vaultSubdirectory)
+                        && !TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath2, out vaultSubdirectory))
                     {
                         continue;
                     }
