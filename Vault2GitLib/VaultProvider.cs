@@ -86,9 +86,9 @@ namespace Vault2Git.Lib
         /// <returns>Version if there's a matching transaction ID. Null in case folder was created after searched transaction. Exception otherwise</returns>
         public VaultTransactionDetail VaultGetFolderVersion(string folderPath, DateTime beginDate, long txId)
         {
-            if (string.IsNullOrEmpty(folderPath))
+            if (string.IsNullOrEmpty(folderPath) || folderPath == "$")
             {
-                folderPath = "$";
+                folderPath = "$/";
             }
 
             if (!_pathToFromDateToVaultVersionsCache.TryGetValue(folderPath, out var dateToVaultHistItems))
