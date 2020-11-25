@@ -119,6 +119,15 @@ namespace Vault2Git.Lib
         private readonly IGitProvider _git;
         private readonly IVaultProvider _vault;
 
+        private class TransactionDetail
+        {
+            public string Author;
+            public string Comment;
+            public DateTime MinCommitTime;
+            public DateTime MaxCommitTime;
+            public readonly List<VaultTransactionDetail> VaultTransactionDetails = new List<VaultTransactionDetail>();
+        }
+
         public Processor(IGitProvider git, IVaultProvider vault, DateTime? beginDate, List<string> vaultSubdirectories)
         {
             _git = git;
@@ -192,10 +201,12 @@ namespace Vault2Git.Lib
                         
                         ++counter;
 
-                        var transactionDetails = ProcessTransaction(vaultRepoPath, txId);
-                        GitCommit(transactionDetails, doGitPush, vaultRepoPath, txId, gitBranch);
-
-                        Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}");
+                        var result = ProcessTransaction(vaultRepoPath, txId);
+                        if (GitCommit(result.VaultTransactionDetails, doGitPush, vaultRepoPath, txId, gitBranch))
+                        {
+                            var commitTime = result.MinCommitTime != result.MaxCommitTime ? $"min={result.MinCommitTime},max={result.MaxCommitTime}" : result.MinCommitTime.ToString(CultureInfo.InvariantCulture);
+                            Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}. Author: {result.Author}, Comment: {result.Comment}, commit time: {commitTime}");
+                        }
 
                         //check if limit is reached
                         if (maxTxCount.HasValue && counter >= maxTxCount)
@@ -219,7 +230,7 @@ namespace Vault2Git.Lib
             }
         }
 
-        private void GitCommit(IEnumerable<VaultTransactionDetail> transactionDetails, bool doGitPush, string vaultRepoPath, long txId, string gitBranch)
+        private bool GitCommit(IEnumerable<VaultTransactionDetail> transactionDetails, bool doGitPush, string vaultRepoPath, long txId, string gitBranch)
         {
             var committedAnything = false;
             foreach (var transactionDetail in transactionDetails)
@@ -250,20 +261,32 @@ namespace Vault2Git.Lib
             {
                 _git.GitPushOrigin(gitBranch);
             }
+
+            return committedAnything;
         }
 
-        private IEnumerable<VaultTransactionDetail> ProcessTransaction(string vaultRepoPath, long txId)
+        private TransactionDetail ProcessTransaction(string vaultRepoPath, long txId)
         {
+            var returnValue = new TransactionDetail();
             try
             {
-                var retVal = new Dictionary<string, VaultTransactionDetail>();
+                var subDirToTransactionDetail = new Dictionary<string, VaultTransactionDetail>();
                 var movedRenamedPaths = new Dictionary<string, string>();
                 var txnInfo = _vault.GetTxInfo(txId);
+                returnValue.Author = txnInfo.userlogin;
+                returnValue.Comment = txnInfo.changesetComment;
+
                 // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
                 var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
                 if (orderedItems.Any())
                 {
-                    Log.Debug($"Processing transaction ID {txId}: commit time: {orderedItems[0].TxDate}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}");
+                    var minTime = orderedItems.Min(x => x.TxDate);
+                    var maxTime = orderedItems.Max(x => x.TxDate);
+                    var commitTime = minTime != maxTime ? $"min={minTime},max={maxTime}" : minTime.ToString();
+
+                    var files = string.Join(",", txnInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
+
+                    Log.Debug($"Processing transaction ID {txId}: commit time: {commitTime}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
                 }
 
                 foreach (var txDetailItem in orderedItems)
@@ -274,9 +297,12 @@ namespace Vault2Git.Lib
                         continue;
                     }
 
-                    if (!retVal.TryGetValue(vaultSubdirectory, out _))
+                    returnValue.MaxCommitTime = new DateTime(Math.Max(returnValue.MaxCommitTime.Ticks, txDetailItem.TxDate.Ticks));
+                    returnValue.MinCommitTime = new DateTime(Math.Min(returnValue.MinCommitTime.Ticks, txDetailItem.TxDate.Ticks));
+
+                    if (!subDirToTransactionDetail.TryGetValue(vaultSubdirectory, out _))
                     {
-                        retVal[vaultSubdirectory] = ForceFullFolderGet
+                        var transactionDetail = ForceFullFolderGet
                             ? GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId)
                             : new VaultTransactionDetail
                             {
@@ -287,6 +313,8 @@ namespace Vault2Git.Lib
                                 Version = _vault.VaultGetFolderVersion($"{vaultRepoPath}/{vaultSubdirectory}", _beginDate, txId).Version,
                                 TxId = txId
                             };
+                        subDirToTransactionDetail[vaultSubdirectory] = transactionDetail;
+                        returnValue.VaultTransactionDetails.Add(transactionDetail);
                     }
                     if (ForceFullFolderGet) continue;
 
@@ -365,7 +393,7 @@ namespace Vault2Git.Lib
                     }
                 }
 
-                return retVal.Values;
+                return returnValue;
             }
             catch (Exception)
             {
@@ -378,7 +406,9 @@ namespace Vault2Git.Lib
                 // If we did not need this code then we would not need to use the Working Directory which would be a cleaner solution.
                 try
                 {
-                    return GetVaultSubdirectoriesExactTxId(vaultRepoPath, txId);
+                    returnValue.VaultTransactionDetails.Clear();
+                    returnValue.VaultTransactionDetails.AddRange(GetVaultSubdirectoriesExactTxId(vaultRepoPath, txId));
+                    return returnValue;
                 }
                 catch (Exception e)
                 {
