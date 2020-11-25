@@ -102,13 +102,13 @@ namespace Vault2Git.Lib
             currentBranch = currentBranch ?? "master";
         }
 
-        private void GitLog(string gitBranch, string vaultTag, out string[] msg) => RunGitCommand($"log {gitBranch} --grep \"{Regex.Escape(vaultTag)}\" -n 1", string.Empty, out msg);
+        private void GitLog(string gitBranch, string vaultTag, out List<string> msg) => RunGitCommand($"log {gitBranch} --grep \"{Regex.Escape(vaultTag)}\" -n 1", string.Empty, out msg);
         public void GitAddTag(string tagName, string gitCommitId, string comment) => RunGitCommand($@"tag {tagName} {gitCommitId} -a -m ""{comment}""", string.Empty, out _);
         public void GitCheckout(string branch) => RunGitCommand($"checkout --quiet --force {branch}", string.Empty, out _);
         public void GitPushOrigin(string branch) => RunGitCommand($"push --set-upstream origin {branch}", string.Empty, out _);
         public void GitFinalize() => RunGitCommand("update-server-info", string.Empty, out _);
 
-        private void RunGitCommand(string cmd, string stdInput, out string[] stdOutput)
+        private void RunGitCommand(string cmd, string stdInput, out List<string> stdOutput)
         {
             var pi = new ProcessStartInfo(_pathToGitExe, cmd)
             {
@@ -125,13 +125,17 @@ namespace Vault2Git.Lib
                 var msgs = new List<string>();
                 while (!p.StandardOutput.EndOfStream)
                     msgs.Add(p.StandardOutput.ReadLine());
-                stdOutput = msgs.ToArray();
+                stdOutput = msgs.ToList();
                 p.WaitForExit();
             }
         }
 
-        private long GetVaultTrxIdFromGitLogMessage(IEnumerable<string> msg)
+        private static long GetVaultTrxIdFromGitLogMessage(List<string> msg)
         {
+            if (!msg.Any())
+            {
+                return 0;
+            }
             //get last string
             var stringToParse = msg.Last();
             //search for version tag

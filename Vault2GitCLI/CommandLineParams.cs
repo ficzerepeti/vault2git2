@@ -68,9 +68,10 @@ namespace Vault2Git.CLI
 
         public void ApplyAppConfigIfParamNotPresent(AppSettingsSection appSettings)
         {
-            if (!Directories.Any())
+            var appCfgDirectories = appSettings.Settings["Convertor.Directories"];
+            if (!Directories.Any() && appCfgDirectories != null)
             {
-                Directories = appSettings.Settings["Convertor.Directories"]?.Value.Split(';').ToList() ?? new List<string>{""};
+                Directories = appCfgDirectories.Value.Split(';').ToList();
             }
             
             VaultServer = VaultServer ?? appSettings.Settings["Vault.Server"].Value;
