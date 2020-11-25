@@ -29,7 +29,7 @@ namespace Vault2Git.CLI
         [Option("git-push-origin", Default = false, HelpText = "Git push origin")]
         public bool DoGitPushOrigin { get; set; }
 
-        [Option("begin-date", Default = "1990-1-1", HelpText = "Date to start merge from")]
+        [Option("begin-date", HelpText = "Date to start merge from")]
         public DateTime? BeginDate { get; set; }
 
         // Config settable from both config file and command line. Command line is used if present.
@@ -70,7 +70,7 @@ namespace Vault2Git.CLI
         {
             if (!Directories.Any())
             {
-                Directories = appSettings.Settings["Convertor.Directories"].Value.Split(';').ToList();
+                Directories = appSettings.Settings["Convertor.Directories"]?.Value.Split(';').ToList() ?? new List<string>{""};
             }
             
             VaultServer = VaultServer ?? appSettings.Settings["Vault.Server"].Value;
