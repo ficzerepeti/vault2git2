@@ -46,6 +46,7 @@ namespace Vault2Git.Lib
         private readonly string _vaultServer;
         private readonly string _vaultUser;
         private readonly string _vaultPassword;
+        private readonly Dictionary<string, SortedDictionary<DateTime, SortedDictionary<long, VaultTxHistoryItem>>> _pathToFromDateToVaultVersionsCache = new Dictionary<string, SortedDictionary<DateTime, SortedDictionary<long, VaultTxHistoryItem>>>();
 
         public VaultProvider(string vaultServer, string vaultRepository, string vaultUser, string vaultPassword)
         {
@@ -85,15 +86,31 @@ namespace Vault2Git.Lib
         /// <returns>Version if there's a matching transaction ID. Null in case folder was created after searched transaction. Exception otherwise</returns>
         public VaultTransactionDetail VaultGetFolderVersion(string folderPath, DateTime beginDate, long txId)
         {
-            var versions = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(beginDate.Ticks), new VaultDateTime(2090, 1, 1), 0);
-            var vaultHistoryItem = versions.FirstOrDefault(x => x.TxID == txId);
-            if (vaultHistoryItem != null)
+            if (string.IsNullOrEmpty(folderPath))
+            {
+                folderPath = "$";
+            }
+
+            if (!_pathToFromDateToVaultVersionsCache.TryGetValue(folderPath, out var dateToVaultHistItems))
+            {
+                dateToVaultHistItems = new SortedDictionary<DateTime, SortedDictionary<long, VaultTxHistoryItem>>();
+                _pathToFromDateToVaultVersionsCache[folderPath] = dateToVaultHistItems;
+            }
+
+            var versions = dateToVaultHistItems.FirstOrDefault(x => beginDate >= x.Key).Value;
+            if (versions == null)
+            {
+                var versionsArray = ServerOperations.ProcessCommandVersionHistory(folderPath, -1, new VaultDateTime(beginDate.Ticks), new VaultDateTime(2090, 1, 1), 0);
+                versions = new SortedDictionary<long, VaultTxHistoryItem>(versionsArray.ToDictionary(x => x.TxID, x => x));
+                dateToVaultHistItems[beginDate] = versions;
+            }
+
+            if (versions.TryGetValue(txId, out var vaultHistoryItem))
             {
                 return new VaultTransactionDetail{Author = vaultHistoryItem.UserLogin, Comment = vaultHistoryItem.Comment, Subdirectory = folderPath, Version = vaultHistoryItem.Version, CommitTime = vaultHistoryItem.TxDate, TxId = txId};
             }
 
-            var minTxId = versions.Min(x => x.TxID);
-            if (minTxId > txId)
+            if (versions.Count > 0 && versions.First().Key > txId)
             {
                 return null;
             }
@@ -103,7 +120,7 @@ namespace Vault2Git.Lib
 
         public VaultTransactionDetail VaultGetFolderVersionExactTxId(string repoPath, string folderPath, DateTime beginDate, long txId)
         {
-            var versions = ServerOperations.ProcessCommandVersionHistory($"{repoPath}/{folderPath}", -1, new VaultDateTime(beginDate.Ticks), new VaultDateTime(2090, 1, 1), 0);
+            var versions = ServerOperations.ProcessCommandVersionHistory(string.IsNullOrEmpty(folderPath) ? "$" : $"{repoPath}/{folderPath}", -1, new VaultDateTime(beginDate.Ticks), new VaultDateTime(2090, 1, 1), 0);
             var vaultHistoryItem = versions.FirstOrDefault(x => x.TxID == txId);
             return vaultHistoryItem != null ? new VaultTransactionDetail{Author = vaultHistoryItem.UserLogin, Comment = vaultHistoryItem.Comment, Subdirectory = folderPath, Version = vaultHistoryItem.Version, CommitTime = vaultHistoryItem.TxDate, TxId = txId} : null;
         }
@@ -131,6 +148,12 @@ namespace Vault2Git.Lib
 
         public void VaultGetVersion(string vaultPath, long vaultVersion, bool recursive)
         {
+            if (string.IsNullOrEmpty(vaultPath))
+            {
+                vaultPath = "$";
+                recursive = true;
+            }
+
             // Allow exception to percolate up. Presume its due to a file missing from the latest Version 
             // that's in this Version. That is, this file is later deleted, moved or renamed.
             // apply version to the repo folder

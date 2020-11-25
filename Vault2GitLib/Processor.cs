@@ -102,8 +102,7 @@ namespace Vault2Git.Lib
         private string _originalGitBranch;
         private readonly bool _mergeAllHistory;
         private DateTime _beginDate;
-
-        public List<string> VaultSubdirectories = new List<string>{""};
+        private readonly List<string> _vaultSubdirectories;
 
         //flags
         public bool ForceFullFolderGet = false;
@@ -120,11 +119,12 @@ namespace Vault2Git.Lib
         private readonly IGitProvider _git;
         private readonly IVaultProvider _vault;
 
-        public Processor(IGitProvider git, IVaultProvider vault, DateTime? beginDate)
+        public Processor(IGitProvider git, IVaultProvider vault, DateTime? beginDate, List<string> vaultSubdirectories)
         {
             _git = git;
             _vault = vault;
             _beginDate = beginDate ?? new DateTime(1990,1,1);
+            _vaultSubdirectories = vaultSubdirectories;
             _mergeAllHistory = !beginDate.HasValue;
         }
 
@@ -164,7 +164,7 @@ namespace Vault2Git.Lib
                     // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
                     if (!_mergeAllHistory)
                     {
-                        foreach (var vaultSubdirectory in VaultSubdirectories.Where(subDir => !Directory.Exists(Path.Combine(WorkingFolder, subDir))))
+                        foreach (var vaultSubdirectory in _vaultSubdirectories.Where(subDir => !Directory.Exists(Path.Combine(WorkingFolder, subDir))))
                         {
                             var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(vaultRepoPath, vaultSubdirectory, _beginDate);
                             if (transactionDetail == null) continue;
@@ -174,7 +174,8 @@ namespace Vault2Git.Lib
                     }
 
                     var txIds = new SortedSet<long>();
-                    foreach (var vaultSubdirectory in VaultSubdirectories)
+                    var directories = _vaultSubdirectories.Any() ? _vaultSubdirectories : new List<string>{ "" };
+                    foreach (var vaultSubdirectory in directories)
                     {
                         //get current Git version
                         var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"));
@@ -224,7 +225,8 @@ namespace Vault2Git.Lib
             foreach (var transactionDetail in transactionDetails)
             {
                 var commitMsg = BuildCommitMessage($"{vaultRepoPath}/{transactionDetail.Subdirectory}", txId, transactionDetail.Comment);
-                var gitCommitId = _git.GitCommit(transactionDetail.Author, commitMsg, new DateTime(transactionDetail.CommitTime.Ticks), transactionDetail.Subdirectory);
+                var subDir = string.IsNullOrEmpty(transactionDetail.Subdirectory) ? "." : transactionDetail.Subdirectory;
+                var gitCommitId = _git.GitCommit(transactionDetail.Author, commitMsg, new DateTime(transactionDetail.CommitTime.Ticks), subDir);
 
                 if (string.IsNullOrEmpty(gitCommitId)) continue;
                 committedAnything = true;
@@ -317,45 +319,48 @@ namespace Vault2Git.Lib
                         case VaultRequestType.Share:
                             ProcessFileItem(vaultPathWithSubdir, workingDirWithSubdir, txDetailItem, false);
                             continue;
+
+                        case VaultRequestType.CheckIn:
+                        case VaultRequestType.CheckOut:
+                        case VaultRequestType.LabelItem:
                         case VaultRequestType.AddFolder: // Nothing in a CopyBranch to do. Its just a place marker
                         case VaultRequestType.CopyBranch: // Git doesn't add empty folders
                             continue;
                     }
 
-                    // Apply the changes from vault of the correct version for this file 
+                    // Apply the changes from vault of the correct version for this file
+                    var itemPath = string.IsNullOrEmpty(txDetailItem.ItemPath1) ? txDetailItem.Name : txDetailItem.ItemPath1;
+
                     try
                     {
-                        if (movedRenamedPaths.TryGetValue(txDetailItem.ItemPath1, out var itemPath))
+                        var isMoved = movedRenamedPaths.TryGetValue(itemPath, out var movedTo);
+                        if (isMoved)
                         {
-                            Log.Debug($"Handling rename/move from {txDetailItem.ItemPath1} to {itemPath}");
-                        }
-                        else
-                        {
-                            itemPath = txDetailItem.ItemPath1;
+                            Log.Debug($"Handling rename/move from {itemPath} to {movedTo}");
                         }
 
-                        _vault.VaultGetVersion(itemPath, txDetailItem.Version, false);
+                        _vault.VaultGetVersion(isMoved ? movedTo : itemPath, txDetailItem.Version, false);
                     }
                     catch (Exception)
                     {
-                        var folderPath = Path.GetDirectoryName(txDetailItem.ItemPath1).ToForwardSlash();
+                        var folderPath = Path.GetDirectoryName(itemPath).ToForwardSlash();
                         var folderVersion = _vault.VaultGetFolderVersion(folderPath, _beginDate, txId).Version;
                         _vault.VaultGetVersion(folderPath, folderVersion, false);
                     }
 
-                    if (!File.Exists(txDetailItem.ItemPath1)) continue;
+                    if (!File.Exists(itemPath)) continue;
 
                     // Remove Source Code Control
-                    switch (Path.GetExtension(txDetailItem.ItemPath1).ToLower())
+                    switch (Path.GetExtension(itemPath).ToLower())
                     {
                         case ".sln":
-                            RemoveSccFromSln(txDetailItem.ItemPath1);
+                            RemoveSccFromSln(itemPath);
                             break;
                         case ".csproj":
-                            RemoveSccFromCsProj(txDetailItem.ItemPath1);
+                            RemoveSccFromCsProj(itemPath);
                             break;
                         case ".vdproj":
-                            RemoveSccFromVdProj(txDetailItem.ItemPath1);
+                            RemoveSccFromVdProj(itemPath);
                             break;
                     }
                 }
@@ -386,7 +391,7 @@ namespace Vault2Git.Lib
         private IEnumerable<VaultTransactionDetail> GetVaultSubdirectoriesExactTxId(string vaultRepoPath, long txId)
         {
             var retVal = new Dictionary<string, VaultTransactionDetail>();
-            foreach (var vaultSubdirectory in VaultSubdirectories)
+            foreach (var vaultSubdirectory in _vaultSubdirectories)
             {
                 var transactionDetail = GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId);
                 if (transactionDetail != null)
@@ -685,7 +690,14 @@ namespace Vault2Git.Lib
 
         private bool TryFindMatchingSubdir(string vaultRepo, string itemPath, out string matchingVaultSubdirectory)
         {
-            foreach (var vaultSubdirectory in VaultSubdirectories)
+
+            if (!_vaultSubdirectories.Any())
+            {
+                matchingVaultSubdirectory = "";
+                return true;
+            }
+
+            foreach (var vaultSubdirectory in _vaultSubdirectories)
             {
                 if (itemPath.StartsWith($"{vaultRepo}/{vaultSubdirectory}/", true, CultureInfo.CurrentCulture)
                     || itemPath.Equals($"{vaultRepo}/{vaultSubdirectory}", StringComparison.CurrentCultureIgnoreCase))

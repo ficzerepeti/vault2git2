@@ -78,11 +78,10 @@ namespace Vault2Git.CLI
             var git = new GitProvider(param.WorkingFolder, param.GitCmd, param.GitDomainName, param.SkipEmptyCommits);
             var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword);
 
-            var processor = new Processor(git, vault, param.BeginDate)
+            var processor = new Processor(git, vault, param.BeginDate, param.Directories.ToList())
             {
                 WorkingFolder = param.WorkingFolder,
-                ForceFullFolderGet= param.ForceFullFolderGet,
-                VaultSubdirectories = param.Directories.ToList()
+                ForceFullFolderGet= param.ForceFullFolderGet
             };
 
             var git2VaultRepoPathsSubset = new Dictionary<string, string>();
