@@ -76,9 +76,9 @@ namespace Vault2Git.CLI
             Log.Information(param.ToString());
 
             var git = new GitProvider(param.WorkingFolder, param.GitCmd, param.GitDomainName, param.SkipEmptyCommits);
-            var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword);
+            var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword, param.BeginDate ?? new DateTime(1990,1,1));
 
-            var processor = new Processor(git, vault, param.BeginDate, param.Directories.ToList())
+            var processor = new Processor(git, vault, param.Directories.ToList())
             {
                 WorkingFolder = param.WorkingFolder,
                 ForceFullFolderGet= param.ForceFullFolderGet
