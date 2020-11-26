@@ -262,169 +262,166 @@ namespace Vault2Git.Lib
         {
             var foldersRecursivelyDownloaded = new HashSet<string>();
             var returnValue = new TransactionDetail();
-            try
+
+            var subDirToTransactionDetail = new Dictionary<string, VaultTransactionDetail>();
+            var txnInfo = _vault.GetTxInfo(txId);
+            returnValue.Author = txnInfo.userlogin;
+            returnValue.Comment = txnInfo.changesetComment;
+
+            // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
+            var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
+            if (orderedItems.Any())
             {
-                var subDirToTransactionDetail = new Dictionary<string, VaultTransactionDetail>();
-                var movedRenamedPaths = new Dictionary<string, string>();
-                var txnInfo = _vault.GetTxInfo(txId);
-                returnValue.Author = txnInfo.userlogin;
-                returnValue.Comment = txnInfo.changesetComment;
+                var minTime = orderedItems.Min(x => x.TxDate);
+                var maxTime = orderedItems.Max(x => x.TxDate);
+                var commitTime = minTime != maxTime ? $"min={minTime},max={maxTime}" : minTime.ToString();
 
-                // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
-                var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
-                if (orderedItems.Any())
+                var files = string.Join(",", txnInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
+
+                Log.Debug($"Processing transaction ID {txId}: commit time: {commitTime}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
+            }
+
+            foreach (var txDetailItem in orderedItems)
+            {
+                if (!TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath1, out var vaultSubdirectory)
+                    && !TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath2, out vaultSubdirectory))
                 {
-                    var minTime = orderedItems.Min(x => x.TxDate);
-                    var maxTime = orderedItems.Max(x => x.TxDate);
-                    var commitTime = minTime != maxTime ? $"min={minTime},max={maxTime}" : minTime.ToString();
-
-                    var files = string.Join(",", txnInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
-
-                    Log.Debug($"Processing transaction ID {txId}: commit time: {commitTime}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
+                    continue;
                 }
 
-                foreach (var txDetailItem in orderedItems)
+                if (!subDirToTransactionDetail.TryGetValue(vaultSubdirectory, out _))
                 {
-                    if (!TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath1, out var vaultSubdirectory)
-                        && !TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath2, out vaultSubdirectory))
+                    var transactionDetail = ForceFullFolderGet
+                        ? GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId)
+                        : new VaultTransactionDetail
+                        {
+                            Author = txnInfo.userlogin,
+                            Comment = txnInfo.changesetComment,
+                            Subdirectory = vaultSubdirectory,
+                            CommitTime = txDetailItem.TxDate,
+                            Version = _vault.VaultGetTransactionDetail(vaultRepoPath, vaultSubdirectory, txId).Version,
+                            TxId = txId
+                        };
+                    subDirToTransactionDetail[vaultSubdirectory] = transactionDetail;
+                    returnValue.VaultTransactionDetails.Add(transactionDetail);
+                }
+
+                if (ForceFullFolderGet) continue;
+
+                var itemPath = RemoveRepoFromItemPath(vaultRepoPath, string.IsNullOrEmpty(txDetailItem.ItemPath1) ? txDetailItem.Name : txDetailItem.ItemPath1);
+
+                switch (txDetailItem.RequestType)
+                {
+                    // Do deletions, renames and moves ourselves
+                    case VaultRequestType.Delete:
                     {
+                        var filesystemPath = txDetailItem.ItemPath1.Replace(vaultRepoPath, WorkingFolder);
+
+                        if (File.Exists(filesystemPath))
+                        {
+                            File.Delete(filesystemPath);
+                        }
+                        else if (Directory.Exists(filesystemPath))
+                        {
+                            Directory.Delete(filesystemPath, true);
+                        }
+
                         continue;
                     }
 
-                    if (!subDirToTransactionDetail.TryGetValue(vaultSubdirectory, out _))
-                    {
-                        var transactionDetail = ForceFullFolderGet
-                            ? GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId)
-                            : new VaultTransactionDetail
-                            {
-                                Author = txnInfo.userlogin,
-                                Comment = txnInfo.changesetComment,
-                                Subdirectory = vaultSubdirectory,
-                                CommitTime = txDetailItem.TxDate,
-                                Version = _vault.VaultGetFolderVersion(vaultRepoPath, vaultSubdirectory, txId).Version,
-                                TxId = txId
-                            };
-                        subDirToTransactionDetail[vaultSubdirectory] = transactionDetail;
-                        returnValue.VaultTransactionDetails.Add(transactionDetail);
-                    }
-                    if (ForceFullFolderGet) continue;
+                    case VaultRequestType.Share:
+                    case VaultRequestType.CheckIn:
+                    case VaultRequestType.CheckOut:
+                    case VaultRequestType.LabelItem:
+                    case VaultRequestType.AddFolder: // Nothing in a CopyBranch to do. Its just a place marker
+                    case VaultRequestType.CopyBranch: // Git doesn't add empty folders
+                        continue;
 
-                    var workingDirWithSubdir = Path.Combine(WorkingFolder, vaultSubdirectory);
-                    var vaultPathWithSubdir = $"{vaultRepoPath}/{vaultSubdirectory}";
-                    switch (txDetailItem.RequestType)
+                    case VaultRequestType.Move:
                     {
-                        // Do deletions, renames and moves ourselves
-                        case VaultRequestType.Delete:
+                        Log.Debug($"Handling rename/move from {txDetailItem.ItemPath1} to {txDetailItem.ItemPath2}");
+                        var item1FsPath = txDetailItem.ItemPath1.Replace(vaultRepoPath, WorkingFolder);
+                        if (File.Exists(item1FsPath))
                         {
-                            var filesystemPath = txDetailItem.ItemPath1.Replace(vaultRepoPath, WorkingFolder);
-
-                            if (File.Exists(filesystemPath))
-                            {
-                                File.Delete(filesystemPath);
-                            }
-                            else if (Directory.Exists(filesystemPath))
-                            {
-                                Directory.Delete(filesystemPath, true);
-                            }
-
-                            continue;
+                            File.Delete(item1FsPath);
                         }
-                        case VaultRequestType.Move:
-                        case VaultRequestType.Rename:
-                            ProcessFileItem(vaultPathWithSubdir, workingDirWithSubdir, txDetailItem, true);
-                            var movedTo = Path.Combine(Path.GetDirectoryName(txDetailItem.ItemPath1), txDetailItem.ItemPath2).ToForwardSlash();
-                            movedRenamedPaths.Add(txDetailItem.ItemPath1, movedTo);
-                            continue;
-                        case VaultRequestType.Share:
-                            ProcessFileItem(vaultPathWithSubdir, workingDirWithSubdir, txDetailItem, false);
-                            continue;
-
-                        case VaultRequestType.CheckIn:
-                        case VaultRequestType.CheckOut:
-                        case VaultRequestType.LabelItem:
-                        case VaultRequestType.AddFolder: // Nothing in a CopyBranch to do. Its just a place marker
-                        case VaultRequestType.CopyBranch: // Git doesn't add empty folders
-                            continue;
-                    }
-
-                    // Apply the changes from vault of the correct version for this file
-                    var itemPath = string.IsNullOrEmpty(txDetailItem.ItemPath1) ? txDetailItem.Name : txDetailItem.ItemPath1;
-
-                    try
-                    {
-                        var isMoved = movedRenamedPaths.TryGetValue(itemPath, out var movedTo);
-                        if (isMoved)
+                        else if (Directory.Exists(item1FsPath))
                         {
-                            Log.Debug($"Handling rename/move from {itemPath} to {movedTo}");
+                            Directory.Delete(item1FsPath, true);
                         }
 
-                        _vault.VaultGetVersion(vaultRepoPath, isMoved ? movedTo : itemPath, txDetailItem.Version, false);
+                        itemPath = RemoveRepoFromItemPath(vaultRepoPath, txDetailItem.ItemPath2);
+                        break;
                     }
-                    catch (Exception)
+
+                    case VaultRequestType.Rename:
                     {
-                        var folderPath = Path.GetDirectoryName(itemPath).ToForwardSlash();
-                        if (foldersRecursivelyDownloaded.Add(folderPath))
+                        Log.Debug($"Handling rename/move from {txDetailItem.ItemPath1} to {txDetailItem.ItemPath2}");
+                        var item1FsPath = txDetailItem.ItemPath1.Replace(vaultRepoPath, WorkingFolder);
+                        var item2FsPath = Path.Combine(Path.GetDirectoryName(item1FsPath), txDetailItem.ItemPath2);
+
+                        if (Directory.Exists(item2FsPath)) Directory.Delete(item2FsPath, true);
+                        else if (File.Exists(item2FsPath)) File.Delete(item2FsPath);
+
+                        if (Directory.Exists(item1FsPath)) Directory.Move(item1FsPath, item2FsPath);
+                        else if (File.Exists(item1FsPath)) File.Move(item1FsPath, item2FsPath);
+                        else
                         {
-                            var folderVersion = _vault.VaultGetFolderVersion(vaultRepoPath, folderPath, txId).Version;
-                            GetVaultSubdirectoryExactTxId(vaultRepoPath, folderPath, folderVersion);
+                            var origFileName = Path.GetFileName(txDetailItem.ItemPath1);
+                            itemPath = RemoveRepoFromItemPath(vaultRepoPath, txDetailItem.ItemPath1).Replace(origFileName, txDetailItem.ItemPath2);
+                            break;
                         }
-                    }
-
-                    if (!File.Exists(itemPath)) continue;
-
-                    // Remove Source Code Control
-                    switch (Path.GetExtension(itemPath).ToLower())
-                    {
-                        case ".sln":
-                            RemoveSccFromSln(itemPath);
-                            break;
-                        case ".csproj":
-                            RemoveSccFromCsProj(itemPath);
-                            break;
-                        case ".vdproj":
-                            RemoveSccFromVdProj(itemPath);
-                            break;
+                        continue;
                     }
                 }
 
-                return returnValue;
-            }
-            catch (Exception)
-            {
-                // If an exception is thrown, presume its because a file has been requested which no longer exists in the tip of the repository.
-                // That is, the file has been moved, renamed or deleted.
-                // It may be accurate to search the txn details in above loop for request types of moved, renamed or deleted and
-                // if one is found, execute this code rather than waiting for the exception. Just not sure that it will find everything. But
-                // I know this code works, though it is much slower for repositories with a large number of files in each Version. Also, all the 
-                // files that have been retrieved from the Server will still be in the client-side cache so the GetFile above is not wasted.
-                // If we did not need this code then we would not need to use the Working Directory which would be a cleaner solution.
+                // Apply the changes from vault of the correct version for this file
                 try
                 {
-                    returnValue.VaultTransactionDetails.Clear();
-                    returnValue.VaultTransactionDetails.AddRange(GetVaultSubdirectoriesExactTxId(vaultRepoPath, txId));
-                    return returnValue;
+                    _vault.VaultGetVersion(vaultRepoPath, itemPath, txDetailItem.Version, false);
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
-                    Log.Error($"Cannot get transaction details for {txId}.\n{e}");
-                    throw;
+                    if (foldersRecursivelyDownloaded.Add(vaultSubdirectory))
+                    {
+                        var folderVersion = _vault.VaultGetTransactionDetail(vaultRepoPath, vaultSubdirectory, txId).Version;
+                        GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, folderVersion);
+                    }
+                }
+
+                var fsPath = Path.Combine(WorkingFolder, itemPath);
+                if (!File.Exists(fsPath)) continue;
+
+                // Remove Source Code Control
+                switch (Path.GetExtension(fsPath).ToLower())
+                {
+                    case ".sln":
+                        RemoveSccFromSln(fsPath);
+                        break;
+                    case ".csproj":
+                        RemoveSccFromCsProj(fsPath);
+                        break;
+                    case ".vdproj":
+                        RemoveSccFromVdProj(fsPath);
+                        break;
                 }
             }
+
+            return returnValue;
         }
 
-        private IEnumerable<VaultTransactionDetail> GetVaultSubdirectoriesExactTxId(string vaultRepoPath, long txId)
+        private static string RemoveRepoFromItemPath(string vaultRepoPath, string itemPath)
         {
-            var retVal = new Dictionary<string, VaultTransactionDetail>();
-            foreach (var vaultSubdirectory in _vaultSubdirectories)
+            if (itemPath.StartsWith(vaultRepoPath))
             {
-                var transactionDetail = GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId);
-                if (transactionDetail != null)
+                itemPath = itemPath.Remove(0, vaultRepoPath.Length);
+                if (itemPath.StartsWith("/"))
                 {
-                    retVal[vaultSubdirectory] = transactionDetail;
+                    itemPath = itemPath.Remove(0, 1);
                 }
             }
 
-            return retVal.Values;
+            return itemPath;
         }
 
         private VaultTransactionDetail GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
@@ -588,95 +585,6 @@ namespace Vault2Git.Lib
                 _vault.EndLabelQuery(qryToken);
                 _vault.VaultLogout();
                 _git.GitFinalize();
-            }
-        }
-
-        private static void ProcessFileItem(string vaultRepoPath, string workingFolder, VaultTxDetailHistoryItem txdetailitem, bool moveFiles)
-        {
-            // Convert the Vault path to a file system path
-            var itemPath1 = string.Copy(txdetailitem.ItemPath1);
-            var itemPath2 = string.Copy(txdetailitem.ItemPath2);
-
-            // Ensure the files are withing the folder we are working with. 
-            // If the source path is outside the current branch, throw an exception and let vault handle the processing because
-            // we do not have the correct state of files outside the current branch.
-            // If the target path is outside, ignore a file copy and delete a file move.
-            // E.g. A Share can be shared outside of the branch we are working with
-            Log.Debug($"Processing {itemPath1} to {itemPath2}. MoveFiles = {moveFiles})");
-            var itemPath1WithinCurrentBranch = itemPath1.StartsWith(vaultRepoPath, true, CultureInfo.CurrentCulture);
-            var itemPath2WithinCurrentBranch = itemPath2.StartsWith(vaultRepoPath, true, CultureInfo.CurrentCulture);
-
-            if (!itemPath1WithinCurrentBranch)
-            {
-                Log.Debug("   Source file is outside of working folder. Error");
-                throw new FileNotFoundException($"Source file is outside the current branch: {itemPath1}");
-            }
-
-            // Don't copy files outside of the branch
-            if (!moveFiles && !itemPath2WithinCurrentBranch)
-            {
-                Log.Debug("   Ignoring target file outside of working folder");
-                return;
-            }
-
-            itemPath1 = itemPath1.Replace(vaultRepoPath, workingFolder, StringComparison.CurrentCultureIgnoreCase);
-            itemPath1 = itemPath1.Replace('/', '\\');
-
-            itemPath2 = itemPath2.Replace(vaultRepoPath, workingFolder, StringComparison.CurrentCultureIgnoreCase);
-            itemPath2 = itemPath2.Replace('/', '\\');
-
-            if (File.Exists(itemPath1))
-            {
-                var directory2 = Path.GetDirectoryName(itemPath2);
-                if (!Directory.Exists(directory2))
-                {
-                    Directory.CreateDirectory(directory2);
-                }
-
-                if (itemPath2WithinCurrentBranch && File.Exists(itemPath2))
-                {
-                    Log.Debug($"   Deleting {itemPath2}");
-                    File.Delete(itemPath2);
-                }
-
-                if (moveFiles)
-                {
-                    // If target is outside of current branch, just delete the source file
-                    if (!itemPath2WithinCurrentBranch)
-                    {
-                        Log.Debug($"   Deleting {itemPath1}");
-                        File.Delete(itemPath1);
-                    }
-                    else
-                    {
-                        Log.Debug($"   Moving {itemPath2}");
-                        File.Move(itemPath1, itemPath2);
-                    }
-                }
-                else
-                {
-                    Log.Debug($"   Copying {itemPath1} to {itemPath2}");
-                    File.Copy(itemPath1, itemPath2);
-                }
-            }
-            else if (Directory.Exists(itemPath1))
-            {
-                if (moveFiles)
-                {
-                    // If target is outside of current branch, just delete the source directory
-                    if (!itemPath2WithinCurrentBranch)
-                    {
-                        Directory.Delete(itemPath1);
-                    }
-                    else
-                    {
-                        Directory.Move(itemPath1, itemPath2);
-                    }
-                }
-                else
-                {
-                    DirectoryCopy(itemPath1, itemPath2, true);
-                }
             }
         }
 
