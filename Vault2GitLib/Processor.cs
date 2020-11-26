@@ -100,7 +100,6 @@ namespace Vault2Git.Lib
         public string WorkingFolder;
 
         private string _originalGitBranch;
-        private readonly bool _mergeAllHistory;
         private DateTime _beginDate;
         private readonly List<string> _vaultSubdirectories;
 
@@ -134,7 +133,6 @@ namespace Vault2Git.Lib
             _vault = vault;
             _beginDate = beginDate ?? new DateTime(1990,1,1);
             _vaultSubdirectories = vaultSubdirectories;
-            _mergeAllHistory = !beginDate.HasValue;
         }
 
         /// <summary>
@@ -169,30 +167,6 @@ namespace Vault2Git.Lib
                     {
                         Environment.Exit(1);
                     }
-                    
-                    // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
-                    if (!_mergeAllHistory)
-                    {
-                        void GetInitialDir(string vaultSubdirectory)
-                        {
-                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(vaultRepoPath, vaultSubdirectory, _beginDate);
-                            if (transactionDetail == null) return;
-                            _vault.VaultGetVersion($"{vaultRepoPath}/{vaultSubdirectory}", transactionDetail.Version, true);
-                            GitCommit(new[] {transactionDetail}, doGitPush, vaultRepoPath, transactionDetail.TxId, gitBranch);
-                        }
-
-                        if (_vaultSubdirectories.Any())
-                        {
-                            foreach (var vaultSubdirectory in _vaultSubdirectories.Where(subDir => !Directory.Exists(Path.Combine(WorkingFolder, subDir))))
-                            {
-                                GetInitialDir(vaultSubdirectory);
-                            }
-                        }
-                        else
-                        {
-                            GetInitialDir("");
-                        }
-                    }
 
                     var txIds = new SortedSet<long>();
                     var directories = _vaultSubdirectories.Any() ? _vaultSubdirectories : new List<string>{ "" };
@@ -200,8 +174,20 @@ namespace Vault2Git.Lib
                     {
                         //get current Git version
                         var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"));
+
+                        // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
+                        if (!currentGitVaultVersion.HasValue)
+                        {
+                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(vaultRepoPath, vaultSubdirectory, _beginDate);
+                            if (transactionDetail != null)
+                            {
+                                _vault.VaultGetVersion($"{vaultRepoPath}/{vaultSubdirectory}", transactionDetail.Version, true);
+                                GitCommit(new[] {transactionDetail}, doGitPush, vaultRepoPath, transactionDetail.TxId, gitBranch);
+                            }
+                        }
+
                         //get vaultVersions
-                        _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, _beginDate, txIds, currentGitVaultVersion);
+                        _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, _beginDate, txIds, currentGitVaultVersion ?? 0);
                     }
 
                     Log.Information($"init took {perBranchWatch.Elapsed}");
