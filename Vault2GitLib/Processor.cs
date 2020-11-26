@@ -123,8 +123,8 @@ namespace Vault2Git.Lib
         {
             public string Author;
             public string Comment;
-            public DateTime MinCommitTime;
-            public DateTime MaxCommitTime;
+            public DateTime MinCommitTime => VaultTransactionDetails.Min(x => x.CommitTime).GetDateTime();
+            public DateTime MaxCommitTime => VaultTransactionDetails.Max(x => x.CommitTime).GetDateTime();
             public readonly List<VaultTransactionDetail> VaultTransactionDetails = new List<VaultTransactionDetail>();
         }
 
@@ -173,12 +173,24 @@ namespace Vault2Git.Lib
                     // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
                     if (!_mergeAllHistory)
                     {
-                        foreach (var vaultSubdirectory in _vaultSubdirectories.Where(subDir => !Directory.Exists(Path.Combine(WorkingFolder, subDir))))
+                        void GetInitialDir(string vaultSubdirectory)
                         {
                             var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(vaultRepoPath, vaultSubdirectory, _beginDate);
-                            if (transactionDetail == null) continue;
+                            if (transactionDetail == null) return;
                             _vault.VaultGetVersion($"{vaultRepoPath}/{vaultSubdirectory}", transactionDetail.Version, true);
                             GitCommit(new[] {transactionDetail}, doGitPush, vaultRepoPath, transactionDetail.TxId, gitBranch);
+                        }
+
+                        if (_vaultSubdirectories.Any())
+                        {
+                            foreach (var vaultSubdirectory in _vaultSubdirectories.Where(subDir => !Directory.Exists(Path.Combine(WorkingFolder, subDir))))
+                            {
+                                GetInitialDir(vaultSubdirectory);
+                            }
+                        }
+                        else
+                        {
+                            GetInitialDir("");
                         }
                     }
 
@@ -204,7 +216,9 @@ namespace Vault2Git.Lib
                         var result = ProcessTransaction(vaultRepoPath, txId);
                         if (GitCommit(result.VaultTransactionDetails, doGitPush, vaultRepoPath, txId, gitBranch))
                         {
-                            var commitTime = result.MinCommitTime != result.MaxCommitTime ? $"min={result.MinCommitTime},max={result.MaxCommitTime}" : result.MinCommitTime.ToString(CultureInfo.InvariantCulture);
+                            var minCommitTime = result.MinCommitTime;
+                            var maxCommitTime = result.MaxCommitTime;
+                            var commitTime = minCommitTime != maxCommitTime ? $"min={minCommitTime},max={maxCommitTime}" : minCommitTime.ToString(CultureInfo.InvariantCulture);
                             Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}. Author: {result.Author}, Comment: {result.Comment}, commit time: {commitTime}");
                         }
 
@@ -267,6 +281,7 @@ namespace Vault2Git.Lib
 
         private TransactionDetail ProcessTransaction(string vaultRepoPath, long txId)
         {
+            var foldersRecursivelyDownloaded = new HashSet<string>();
             var returnValue = new TransactionDetail();
             try
             {
@@ -296,9 +311,6 @@ namespace Vault2Git.Lib
                     {
                         continue;
                     }
-
-                    returnValue.MaxCommitTime = new DateTime(Math.Max(returnValue.MaxCommitTime.Ticks, txDetailItem.TxDate.Ticks));
-                    returnValue.MinCommitTime = new DateTime(Math.Min(returnValue.MinCommitTime.Ticks, txDetailItem.TxDate.Ticks));
 
                     if (!subDirToTransactionDetail.TryGetValue(vaultSubdirectory, out _))
                     {
@@ -372,8 +384,11 @@ namespace Vault2Git.Lib
                     catch (Exception)
                     {
                         var folderPath = Path.GetDirectoryName(itemPath).ToForwardSlash();
-                        var folderVersion = _vault.VaultGetFolderVersion(folderPath, _beginDate, txId).Version;
-                        _vault.VaultGetVersion(folderPath, folderVersion, false);
+                        if (foldersRecursivelyDownloaded.Add(folderPath))
+                        {
+                            var folderVersion = _vault.VaultGetFolderVersion(folderPath, _beginDate, txId).Version;
+                            GetVaultSubdirectoryExactTxId(vaultRepoPath, folderPath, folderVersion);
+                        }
                     }
 
                     if (!File.Exists(itemPath)) continue;
