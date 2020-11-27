@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -93,15 +92,6 @@ namespace Vault2Git.Lib
         private readonly IGitProvider _git;
         private readonly IVaultProvider _vault;
 
-        private class TransactionDetail
-        {
-            public string Author;
-            public string Comment;
-            public DateTime MinCommitTime => VaultTransactionDetails.Min(x => x.CommitTime).GetDateTime();
-            public DateTime MaxCommitTime => VaultTransactionDetails.Max(x => x.CommitTime).GetDateTime();
-            public readonly List<VaultTransactionDetail> VaultTransactionDetails = new List<VaultTransactionDetail>();
-        }
-
         public Processor(IGitProvider git, IVaultProvider vault, List<string> vaultSubdirectories)
         {
             _git = git;
@@ -152,11 +142,11 @@ namespace Vault2Git.Lib
                         // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
                         if (!currentGitVaultVersion.HasValue)
                         {
-                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeDate(vaultRepoPath, vaultSubdirectory);
+                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeBeginDate(vaultRepoPath, vaultSubdirectory);
                             if (transactionDetail != null)
                             {
                                 _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, transactionDetail.Version, true);
-                                GitCommit(new[] {transactionDetail}, doGitPush, vaultRepoPath, transactionDetail.TxId, gitBranch);
+                                GitCommit(new[] {vaultSubdirectory}, doGitPush, vaultRepoPath, transactionDetail.TxID, gitBranch, transactionDetail.UserLogin, transactionDetail.Comment, transactionDetail.TxDate.GetDateTime());
                             }
                         }
 
@@ -173,13 +163,10 @@ namespace Vault2Git.Lib
                         
                         ++counter;
 
-                        var result = ProcessTransaction(vaultRepoPath, txId);
-                        if (GitCommit(result.VaultTransactionDetails, doGitPush, vaultRepoPath, txId, gitBranch))
+                        var subDirectories = ProcessTransaction(vaultRepoPath, txId, out var author, out var comment, out var commitTime);
+                        if (GitCommit(subDirectories, doGitPush, vaultRepoPath, txId, gitBranch, author, comment, commitTime))
                         {
-                            var minCommitTime = result.MinCommitTime;
-                            var maxCommitTime = result.MaxCommitTime;
-                            var commitTime = minCommitTime != maxCommitTime ? $"min={minCommitTime},max={maxCommitTime}" : minCommitTime.ToString(CultureInfo.InvariantCulture);
-                            Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}. Author: {result.Author}, Comment: {result.Comment}, commit time: {commitTime}");
+                            Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}. Author: {author}, Comment: {comment}, commit time: {commitTime}");
                         }
 
                         //check if limit is reached
@@ -204,14 +191,14 @@ namespace Vault2Git.Lib
             }
         }
 
-        private bool GitCommit(IEnumerable<VaultTransactionDetail> transactionDetails, bool doGitPush, string vaultRepoPath, long txId, string gitBranch)
+        private bool GitCommit(IEnumerable<string> subDirectories, bool doGitPush, string vaultRepoPath, long txId, string gitBranch, string author, string comment, DateTime commitTime)
         {
             var committedAnything = false;
-            foreach (var transactionDetail in transactionDetails)
+            foreach (var subDirectory in subDirectories)
             {
-                var commitMsg = BuildCommitMessage($"{vaultRepoPath}/{transactionDetail.Subdirectory}", txId, transactionDetail.Comment);
-                var subDir = string.IsNullOrEmpty(transactionDetail.Subdirectory) ? "." : transactionDetail.Subdirectory;
-                var gitCommitId = _git.GitCommit(transactionDetail.Author, commitMsg, new DateTime(transactionDetail.CommitTime.Ticks), subDir);
+                var commitMsg = BuildCommitMessage($"{vaultRepoPath}/{subDirectory}", txId, comment);
+                var subDir = string.IsNullOrEmpty(subDirectory) ? "." : subDirectory;
+                var gitCommitId = _git.GitCommit(author, commitMsg, commitTime, subDir);
 
                 if (string.IsNullOrEmpty(gitCommitId)) continue;
                 committedAnything = true;
@@ -234,27 +221,26 @@ namespace Vault2Git.Lib
             return committedAnything;
         }
 
-        private TransactionDetail ProcessTransaction(string vaultRepoPath, long txId)
+        private IEnumerable<string> ProcessTransaction(string vaultRepoPath, long txId, out string author, out string comment, out DateTime commitTime)
         {
+            var subDirectories = new HashSet<string>();
             var foldersRecursivelyDownloaded = new HashSet<string>();
-            var returnValue = new TransactionDetail();
 
-            var subDirToTransactionDetail = new Dictionary<string, VaultTransactionDetail>();
             var txnInfo = _vault.GetTxInfo(txId);
-            returnValue.Author = txnInfo.userlogin;
-            returnValue.Comment = txnInfo.changesetComment;
+            author = txnInfo.userlogin;
+            comment = txnInfo.changesetComment;
+            commitTime = DateTime.MinValue;
 
             // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
             var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
             if (orderedItems.Any())
             {
-                var minTime = orderedItems.Min(x => x.TxDate);
-                var maxTime = orderedItems.Max(x => x.TxDate);
-                var commitTime = minTime != maxTime ? $"min={minTime},max={maxTime}" : minTime.ToString();
+                var minTime = orderedItems.Min(x => x.TxDate).GetDateTime();
+                commitTime = orderedItems.Max(x => x.TxDate).GetDateTime();
+                var commitTimeStr = minTime != commitTime ? $"min={minTime},max={commitTime}" : minTime.ToString();
 
                 var files = string.Join(",", txnInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
-
-                Log.Debug($"Processing transaction ID {txId}: commit time: {commitTime}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
+                Log.Debug($"Processing transaction ID {txId}: commit time: {commitTimeStr}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
             }
 
             foreach (var txDetailItem in orderedItems)
@@ -265,22 +251,7 @@ namespace Vault2Git.Lib
                     continue;
                 }
 
-                if (!subDirToTransactionDetail.TryGetValue(vaultSubdirectory, out _))
-                {
-                    var transactionDetail = ForceFullFolderGet
-                        ? GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId)
-                        : new VaultTransactionDetail
-                        {
-                            Author = txnInfo.userlogin,
-                            Comment = txnInfo.changesetComment,
-                            Subdirectory = vaultSubdirectory,
-                            CommitTime = txDetailItem.TxDate,
-                            Version = _vault.VaultGetTransactionDetail(vaultRepoPath, vaultSubdirectory, txId).Version,
-                            TxId = txId
-                        };
-                    subDirToTransactionDetail[vaultSubdirectory] = transactionDetail;
-                    returnValue.VaultTransactionDetails.Add(transactionDetail);
-                }
+                subDirectories.Add(vaultSubdirectory);
 
                 if (ForceFullFolderGet) continue;
 
@@ -334,8 +305,17 @@ namespace Vault2Git.Lib
                             continue;
                         }
 
-                        if (Directory.Exists(item1FsPath)) Directory.Move(item1FsPath, item2FsPath);
-                        else if (File.Exists(item1FsPath)) File.Move(item1FsPath, item2FsPath);
+                        if (Directory.Exists(item1FsPath))
+                        {
+                            var item2FsPathNoSlashEnding = item2FsPath.EndsWith("/") || item2FsPath.EndsWith("\\") ? item2FsPath.Substring(item2FsPath.Length - 1) : item2FsPath;
+                            Directory.CreateDirectory(Path.GetDirectoryName(item2FsPathNoSlashEnding));
+                            Directory.Move(item1FsPath, item2FsPath);
+                        }
+                        else if (File.Exists(item1FsPath))
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(item2FsPath));
+                            File.Move(item1FsPath, item2FsPath);
+                        }
                         else
                         {
                             versionToGet = txDetailItem.OtherVersion;
@@ -351,10 +331,11 @@ namespace Vault2Git.Lib
                 {
                     _vault.VaultGetVersion(vaultRepoPath, itemPath, versionToGet, false);
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
                     if (foldersRecursivelyDownloaded.Add(vaultSubdirectory))
                     {
+                        Log.Debug($"Failed to get {vaultRepoPath}/{itemPath} version {versionToGet}: {e}");
                         GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId);
                     }
                 }
@@ -377,7 +358,7 @@ namespace Vault2Git.Lib
                 }
             }
 
-            return returnValue;
+            return subDirectories;
         }
 
         private static void DeleteFileOrFolder(string fsPath)
@@ -406,15 +387,15 @@ namespace Vault2Git.Lib
             return itemPath;
         }
 
-        private VaultTransactionDetail GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
+        private void GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
         {
             var folderTransactionDetail = _vault.VaultGetFolderVersionExactTxId(vaultRepoPath, vaultSubdirectory, txId);
             if (folderTransactionDetail == null)
             {
-                return null;
+                throw new Exception($"Failed to get transaction detail for {vaultSubdirectory} and txId {txId}");
             }
 
-            Log.Debug($"Getting {vaultRepoPath}/{vaultSubdirectory} recursively. TxID: {txId}, Time: {folderTransactionDetail.CommitTime}, Version: {folderTransactionDetail.Version}, Comment: {folderTransactionDetail.Comment}, Author: {folderTransactionDetail.Author}");
+            Log.Debug($"Getting {vaultRepoPath}/{vaultSubdirectory} recursively. TxID: {txId}, Time: {folderTransactionDetail.TxDate}, Version: {folderTransactionDetail.Version}, Comment: {folderTransactionDetail.Comment}, Author: {folderTransactionDetail.UserLogin}");
             var targetDirectory = Path.Combine(WorkingFolder, vaultSubdirectory);
             if (Directory.Exists(targetDirectory))
             {
@@ -427,8 +408,6 @@ namespace Vault2Git.Lib
             Directory.GetFiles(fsPath, "*.sln", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromSln);
             Directory.GetFiles(fsPath, "*.csproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromCsProj);
             Directory.GetFiles(fsPath, "*.vdproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromVdProj);
-
-            return folderTransactionDetail;
         }
 
         /// <summary>

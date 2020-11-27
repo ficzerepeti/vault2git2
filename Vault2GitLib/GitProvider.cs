@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Serilog;
-using VaultClientOperationsLib;
 
 namespace Vault2Git.Lib
 {
