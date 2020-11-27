@@ -285,6 +285,7 @@ namespace Vault2Git.Lib
                 if (ForceFullFolderGet) continue;
 
                 var itemPath = RemoveRepoFromItemPath(vaultRepoPath, string.IsNullOrEmpty(txDetailItem.ItemPath1) ? txDetailItem.Name : txDetailItem.ItemPath1);
+                var versionToGet = txDetailItem.Version;
 
                 switch (txDetailItem.RequestType)
                 {
@@ -325,13 +326,19 @@ namespace Vault2Git.Lib
                             item1NoRepoPath.Remove(item1NoRepoPath.Length - Path.GetFileName(txDetailItem.ItemPath1).Length) + txDetailItem.ItemPath2; // Rename
                         var item2FsPath = Path.Combine(WorkingFolder, item2NoRepoPath);
 
-                        if (Directory.Exists(item2FsPath)) Directory.Delete(item2FsPath, true);
-                        else if (File.Exists(item2FsPath)) File.Delete(item2FsPath);
+                        DeleteFileOrFolder(item2FsPath);
+
+                        if (!TryFindMatchingSubdir(vaultRepoPath, item2NoRepoPath, out _))
+                        {
+                            DeleteFileOrFolder(item1FsPath);
+                            continue;
+                        }
 
                         if (Directory.Exists(item1FsPath)) Directory.Move(item1FsPath, item2FsPath);
                         else if (File.Exists(item1FsPath)) File.Move(item1FsPath, item2FsPath);
                         else
                         {
+                            versionToGet = txDetailItem.OtherVersion;
                             itemPath = item2NoRepoPath;
                             break;
                         }
@@ -342,7 +349,7 @@ namespace Vault2Git.Lib
                 // Apply the changes from vault of the correct version for this file
                 try
                 {
-                    _vault.VaultGetVersion(vaultRepoPath, itemPath, txDetailItem.Version, false);
+                    _vault.VaultGetVersion(vaultRepoPath, itemPath, versionToGet, false);
                 }
                 catch (Exception)
                 {
@@ -371,6 +378,18 @@ namespace Vault2Git.Lib
             }
 
             return returnValue;
+        }
+
+        private static void DeleteFileOrFolder(string fsPath)
+        {
+            if (Directory.Exists(fsPath))
+            {
+                Directory.Delete(fsPath, true);
+            }
+            else if (File.Exists(fsPath))
+            {
+                File.Delete(fsPath);
+            }
         }
 
         private static string RemoveRepoFromItemPath(string vaultRepoPath, string itemPath)
@@ -542,51 +561,19 @@ namespace Vault2Git.Lib
             }
         }
 
-        private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
-        {
-            // Get the subdirectories for the specified directory.
-            var dir = new DirectoryInfo(sourceDirName);
-
-            if (!dir.Exists)
-            {
-                throw new DirectoryNotFoundException($"Source directory does not exist or could not be found: {sourceDirName}");
-            }
-
-            // If the destination directory doesn't exist, create it. 
-            if (!Directory.Exists(destDirName))
-            {
-                Directory.CreateDirectory(destDirName);
-            }
-
-            // Get the files in the directory and copy them to the new location.
-            foreach (var file in dir.GetFiles())
-            {
-                file.CopyTo(Path.Combine(destDirName, file.Name), false);
-            }
-
-            // If copying subdirectories, copy them and their contents to new location. 
-            if (copySubDirs)
-            {
-                foreach (var subdir in dir.GetDirectories())
-                {
-                    DirectoryCopy(subdir.FullName, Path.Combine(destDirName, subdir.Name), copySubDirs);
-                }
-            }
-        }
-
         private bool TryFindMatchingSubdir(string vaultRepo, string itemPath, out string matchingVaultSubdirectory)
         {
-
             if (!_vaultSubdirectories.Any())
             {
                 matchingVaultSubdirectory = "";
                 return true;
             }
 
+            itemPath = RemoveRepoFromItemPath(vaultRepo, itemPath);
+
             foreach (var vaultSubdirectory in _vaultSubdirectories)
             {
-                if (itemPath.StartsWith($"{vaultRepo}/{vaultSubdirectory}/", true, CultureInfo.CurrentCulture)
-                    || itemPath.Equals($"{vaultRepo}/{vaultSubdirectory}", StringComparison.CurrentCultureIgnoreCase))
+                if (itemPath.StartsWith(vaultSubdirectory, StringComparison.InvariantCultureIgnoreCase))
                 {
                     matchingVaultSubdirectory = vaultSubdirectory;
                     return true;
