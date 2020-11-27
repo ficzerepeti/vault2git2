@@ -137,7 +137,7 @@ namespace Vault2Git.Lib
                     foreach (var vaultSubdirectory in directories)
                     {
                         //get current Git version
-                        var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, BuildVaultTag($"{vaultRepoPath}/{vaultSubdirectory}"));
+                        var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, BuildVaultTag(vaultRepoPath, vaultSubdirectory));
 
                         // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
                         if (!currentGitVaultVersion.HasValue)
@@ -196,7 +196,7 @@ namespace Vault2Git.Lib
             var committedAnything = false;
             foreach (var subDirectory in subDirectories)
             {
-                var commitMsg = BuildCommitMessage($"{vaultRepoPath}/{subDirectory}", txId, comment);
+                var commitMsg = BuildCommitMessage(vaultRepoPath, subDirectory, txId, comment);
                 var subDir = string.IsNullOrEmpty(subDirectory) ? "." : subDirectory;
                 var gitCommitId = _git.GitCommit(author, commitMsg, commitTime, subDir);
 
@@ -581,16 +581,8 @@ namespace Vault2Git.Lib
 
         // vaultLogin is the user name as known in Vault e.g. 'robert' which needs to be mapped to rob.goodridge
 
-        private string BuildCommitMessage(string repoPath, long trxId, string comment)
-        {
-            //parse path repo$RepoPath@version/trx
-            var r = new StringBuilder(comment);
-            r.AppendLine();
-            r.AppendLine($"{BuildVaultTag(repoPath)}@{trxId}");
-            return r.ToString();
-        }
-
-        private string BuildVaultTag(string repoPath) => $"{VaultTag} {_vault.VaultRepository}{repoPath}";
+        private string BuildCommitMessage(string repoPath, string folderPath, long trxId, string comment) => $"{comment}\n{BuildVaultTag(repoPath, folderPath)}@{trxId}";
+        private string BuildVaultTag(string repoPath, string folderPath) => $"{VaultTag} {_vault.VaultRepository}{repoPath}/{folderPath}";
 
         private void VaultFinalize(string vaultRepoPath)
         {

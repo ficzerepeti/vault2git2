@@ -99,8 +99,7 @@ namespace Vault2Git.Lib
         public void GitCurrentBranch(out string currentBranch)
         {
             RunGitCommand("branch", string.Empty, out var msgs);
-            currentBranch = msgs.FirstOrDefault(s => s.StartsWith("*"))?.Substring(1).Trim();
-            currentBranch = currentBranch ?? "master";
+            currentBranch = msgs.FirstOrDefault(s => s.StartsWith("*"))?.Substring(1).Trim() ?? "master";
         }
 
         private void GitLog(string gitBranch, string vaultTag, out List<string> msg) => RunGitCommand($"log {gitBranch} --grep \"{Regex.Escape(vaultTag)}\" -n 1", string.Empty, out msg);
@@ -118,32 +117,27 @@ namespace Vault2Git.Lib
                 RedirectStandardOutput = true,
                 RedirectStandardInput = true
             };
-            using (var p = new Process {StartInfo = pi})
-            {
-                p.Start();
-                p.StandardInput.Write(stdInput);
-                p.StandardInput.Close();
-                var msgs = new List<string>();
-                while (!p.StandardOutput.EndOfStream)
-                    msgs.Add(p.StandardOutput.ReadLine());
-                stdOutput = msgs.ToList();
-                p.WaitForExit();
-            }
+
+            using var p = new Process {StartInfo = pi};
+            p.Start();
+            p.StandardInput.Write(stdInput);
+            p.StandardInput.Close();
+            var msgs = new List<string>();
+            while (!p.StandardOutput.EndOfStream)
+                msgs.Add(p.StandardOutput.ReadLine());
+            stdOutput = msgs.ToList();
+            p.WaitForExit();
         }
 
         private static long GetVaultTrxIdFromGitLogMessage(List<string> msg)
         {
-            if (!msg.Any())
+            var lastLine = msg.LastOrDefault();
+            if (lastLine == null || !lastLine.Trim().StartsWith(Processor.VaultTag))
             {
                 return 0;
             }
-            //get last string
-            var stringToParse = msg.Last();
-            //search for version tag
-            var versionString = stringToParse.Split(new[] {Processor.VaultTag}, StringSplitOptions.None).LastOrDefault();
-            //parse path reporepoPath@version/trx
-            //get version/trx part
-            var versionTrxTag = versionString?.Split('@').LastOrDefault();
+
+            var versionTrxTag = lastLine.Split('@').LastOrDefault();
             if (versionTrxTag == null)
                 return 0;
 
