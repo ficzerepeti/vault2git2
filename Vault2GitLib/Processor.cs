@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -15,27 +14,6 @@ namespace Vault2Git.Lib
 {
     public static class Statics
     {
-        public static string Replace(this string str, string oldValue, string newValue, StringComparison comparision)
-        {
-            var sb = new StringBuilder();
-
-            var previousIndex = 0;
-            var index = str.IndexOf(oldValue, comparision);
-            while (index != -1)
-            {
-                sb.Append(str.Substring(previousIndex, index - previousIndex));
-                sb.Append(newValue);
-                index += oldValue.Length;
-
-                previousIndex = index;
-                index = str.IndexOf(oldValue, index, comparision);
-            }
-
-            sb.Append(str.Substring(previousIndex));
-
-            return sb.ToString();
-        }
-
         // Delete all working files and folders in the repo except those added just for git
         public static bool DeleteWorkingDirectory(string targetDirectory)
         {
@@ -88,8 +66,6 @@ namespace Vault2Git.Lib
 
             return fDeleteDirectory;
         }
-
-        public static string ToForwardSlash(this string str) => str.Replace('\\', '/');
     }
 
     public class Processor
@@ -338,27 +314,17 @@ namespace Vault2Git.Lib
                         continue;
 
                     case VaultRequestType.Move:
-                    {
-                        Log.Debug($"Handling rename/move from {txDetailItem.ItemPath1} to {txDetailItem.ItemPath2}");
-                        var item1FsPath = txDetailItem.ItemPath1.Replace(vaultRepoPath, WorkingFolder);
-                        if (File.Exists(item1FsPath))
-                        {
-                            File.Delete(item1FsPath);
-                        }
-                        else if (Directory.Exists(item1FsPath))
-                        {
-                            Directory.Delete(item1FsPath, true);
-                        }
-
-                        itemPath = RemoveRepoFromItemPath(vaultRepoPath, txDetailItem.ItemPath2);
-                        break;
-                    }
-
                     case VaultRequestType.Rename:
                     {
                         Log.Debug($"Handling rename/move from {txDetailItem.ItemPath1} to {txDetailItem.ItemPath2}");
-                        var item1FsPath = txDetailItem.ItemPath1.Replace(vaultRepoPath, WorkingFolder);
-                        var item2FsPath = Path.Combine(Path.GetDirectoryName(item1FsPath), txDetailItem.ItemPath2);
+
+                        var item1NoRepoPath = RemoveRepoFromItemPath(vaultRepoPath, txDetailItem.ItemPath1);
+                        var item1FsPath = Path.Combine(WorkingFolder, item1NoRepoPath);
+
+                        var item2NoRepoPath = txDetailItem.RequestType == VaultRequestType.Move ?
+                            RemoveRepoFromItemPath(vaultRepoPath, txDetailItem.ItemPath2) : // Move
+                            item1NoRepoPath.Remove(item1NoRepoPath.Length - Path.GetFileName(txDetailItem.ItemPath1).Length) + txDetailItem.ItemPath2; // Rename
+                        var item2FsPath = Path.Combine(WorkingFolder, item2NoRepoPath);
 
                         if (Directory.Exists(item2FsPath)) Directory.Delete(item2FsPath, true);
                         else if (File.Exists(item2FsPath)) File.Delete(item2FsPath);
@@ -367,8 +333,7 @@ namespace Vault2Git.Lib
                         else if (File.Exists(item1FsPath)) File.Move(item1FsPath, item2FsPath);
                         else
                         {
-                            var origFileName = Path.GetFileName(txDetailItem.ItemPath1);
-                            itemPath = RemoveRepoFromItemPath(vaultRepoPath, txDetailItem.ItemPath1).Replace(origFileName, txDetailItem.ItemPath2);
+                            itemPath = item2NoRepoPath;
                             break;
                         }
                         continue;
@@ -384,8 +349,7 @@ namespace Vault2Git.Lib
                 {
                     if (foldersRecursivelyDownloaded.Add(vaultSubdirectory))
                     {
-                        var folderVersion = _vault.VaultGetTransactionDetail(vaultRepoPath, vaultSubdirectory, txId).Version;
-                        GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, folderVersion);
+                        GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txId);
                     }
                 }
 
@@ -426,36 +390,27 @@ namespace Vault2Git.Lib
 
         private VaultTransactionDetail GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
         {
-            var folderVersion = _vault.VaultGetFolderVersionExactTxId(vaultRepoPath, vaultSubdirectory, txId);
-
-            if (folderVersion != null)
+            var folderTransactionDetail = _vault.VaultGetFolderVersionExactTxId(vaultRepoPath, vaultSubdirectory, txId);
+            if (folderTransactionDetail == null)
             {
-                Log.Debug($"Getting {vaultRepoPath}/{vaultSubdirectory} recursively. TxID: {txId}, Time: {folderVersion.CommitTime}, Version: {folderVersion.Version}, Comment: {folderVersion.Comment}, Author: {folderVersion.Author}");
-                folderVersion.Subdirectory = vaultSubdirectory;
-                var targetDirectory = Path.Combine(WorkingFolder, vaultSubdirectory);
-                if (Directory.Exists(targetDirectory))
-                {
-                    Statics.DeleteWorkingDirectory(targetDirectory);
-                }
-
-                _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, folderVersion.Version, true);
-
-                var fsPath = Path.Combine(WorkingFolder, vaultSubdirectory);
-                //change all sln files
-                Directory.GetFiles(fsPath, "*.sln", SearchOption.AllDirectories)
-                    //remove temp files created by vault
-                    .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromSln);
-                //change all csproj files
-                Directory.GetFiles(fsPath, "*.csproj", SearchOption.AllDirectories)
-                    //remove temp files created by vault
-                    .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromCsProj);
-                //change all vdproj files
-                Directory.GetFiles(fsPath, "*.vdproj", SearchOption.AllDirectories)
-                    //remove temp files created by vault
-                    .Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromVdProj);
+                return null;
             }
 
-            return folderVersion;
+            Log.Debug($"Getting {vaultRepoPath}/{vaultSubdirectory} recursively. TxID: {txId}, Time: {folderTransactionDetail.CommitTime}, Version: {folderTransactionDetail.Version}, Comment: {folderTransactionDetail.Comment}, Author: {folderTransactionDetail.Author}");
+            var targetDirectory = Path.Combine(WorkingFolder, vaultSubdirectory);
+            if (Directory.Exists(targetDirectory))
+            {
+                Statics.DeleteWorkingDirectory(targetDirectory);
+            }
+
+            _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, folderTransactionDetail.Version, true);
+
+            var fsPath = Path.Combine(WorkingFolder, vaultSubdirectory);
+            Directory.GetFiles(fsPath, "*.sln", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromSln);
+            Directory.GetFiles(fsPath, "*.csproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromCsProj);
+            Directory.GetFiles(fsPath, "*.vdproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromVdProj);
+
+            return folderTransactionDetail;
         }
 
         /// <summary>
