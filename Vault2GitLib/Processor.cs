@@ -306,7 +306,6 @@ namespace Vault2Git.Lib
                     }
 
                     case VaultRequestType.Share:
-                    case VaultRequestType.CheckIn:
                     case VaultRequestType.CheckOut:
                     case VaultRequestType.LabelItem:
                     case VaultRequestType.AddFolder: // Nothing in a CopyBranch to do. Its just a place marker
