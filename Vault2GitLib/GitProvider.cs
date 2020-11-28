@@ -9,9 +9,9 @@ namespace Vault2Git.Lib
 {
     public interface IGitProvider
     {
-        long? GitVaultVersion(string gitBranch, string vaultTag);
+        long? GitVaultVersion(string gitBranch, string vaultTagStem, string vaultTag);
         void GitCurrentBranch(out string originalGitBranch);
-        string GitCommit(string author, string commitMsg, DateTime dateTime, string subDir);
+        string GitCommit(string author, string commitMsg, DateTime dateTime);
         void GitFinalize();
         void GitAddTag(string tagName, string gitCommitId, string comment);
         void GitCheckout(string branch);
@@ -39,16 +39,22 @@ namespace Vault2Git.Lib
             _skipEmptyCommits = skipEmptyCommits;
         }
 
-        public long? GitVaultVersion(string gitBranch, string vaultTag)
+        public long? GitVaultVersion(string gitBranch, string vaultTagStem, string vaultTag)
         {
             try
             {
                 //get commit message
-                GitLog(gitBranch, vaultTag, out var msgs);
+                GitLog(gitBranch, vaultTagStem, out var msgs);
+
                 //get vault version from commit message
                 var currentVersion = GetVaultTrxIdFromGitLogMessage(msgs);
                 if (currentVersion != 0)
                 {
+                    if (!msgs.Any(x => x.Contains(vaultTag)))
+                    {
+                        Log.Warning($"Latest version {currentVersion} was not created for {vaultTag} but instead was: {msgs.Last()}");
+                    }
+
                     return currentVersion;
                 }
 
@@ -62,11 +68,11 @@ namespace Vault2Git.Lib
             }
         }
 
-        public string GitCommit(string author, string vaultCommitMessage, DateTime commitTimeStamp, string subDir)
+        public string GitCommit(string author, string vaultCommitMessage, DateTime commitTimeStamp)
         {
             GitCurrentBranch(out var gitCurrentBranch);
 
-            RunGitCommand($"add --force --all -- \"{subDir}\"", string.Empty, out var msgs);
+            RunGitCommand($"add --force --all", string.Empty, out var msgs);
             if (_skipEmptyCommits)
             {
                 //checking status

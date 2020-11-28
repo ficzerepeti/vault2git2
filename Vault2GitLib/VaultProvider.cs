@@ -182,12 +182,13 @@ namespace Vault2Git.Lib
         private SortedDictionary<long, VaultTxHistoryItem> GetTxDetailHistoryItems(string repoPath, string subdirectory)
         {
             var fullPath = MakeFullPath(repoPath, subdirectory);
-            if (_pathToTxIdsToTxDetailHistItem.TryGetValue(fullPath, out var beginDateAndTxDetailItems))
+            if (_pathToTxIdsToTxDetailHistItem.TryGetValue(fullPath, out var txIdToHistItem))
             {
-                return beginDateAndTxDetailItems;
+                return txIdToHistItem;
             }
+
             var versions = ServerOperations.ProcessCommandVersionHistory(fullPath, -1, _beginDate, new VaultDateTime(2090,1,1), 0);
-            var txIdToHistItem = new SortedDictionary<long, VaultTxHistoryItem>(versions.ToDictionary(x => x.TxID, x => x));
+            txIdToHistItem = new SortedDictionary<long, VaultTxHistoryItem>(versions.ToDictionary(x => x.TxID, x => x));
             _pathToTxIdsToTxDetailHistItem[fullPath] = txIdToHistItem;
             return txIdToHistItem;
         }

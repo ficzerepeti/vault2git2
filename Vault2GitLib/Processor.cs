@@ -134,19 +134,34 @@ namespace Vault2Git.Lib
 
                     var txIds = new SortedSet<long>();
                     var directories = _vaultSubdirectories.Any() ? _vaultSubdirectories : new List<string>{ "" };
+
+                    //get current Git version
+                    var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, VaultTagStem, BuildVaultTag(vaultRepoPath, directories));
+
                     foreach (var vaultSubdirectory in directories)
                     {
-                        //get current Git version
-                        var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, BuildVaultTag(vaultRepoPath, vaultSubdirectory));
+                        var fsPath = Path.Combine(WorkingFolder, vaultSubdirectory);
 
                         // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
                         if (!currentGitVaultVersion.HasValue)
                         {
-                            var transactionDetail = _vault.VaultGetFolderVersionNearestBeforeBeginDate(vaultRepoPath, vaultSubdirectory);
-                            if (transactionDetail != null)
+                            var txHistoryItem = _vault.VaultGetFolderVersionNearestBeforeBeginDate(vaultRepoPath, vaultSubdirectory);
+                            if (txHistoryItem != null)
                             {
-                                _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, transactionDetail.Version, true);
-                                GitCommit(new[] {vaultSubdirectory}, doGitPush, vaultRepoPath, transactionDetail.TxID, gitBranch, transactionDetail.UserLogin, transactionDetail.Comment, transactionDetail.TxDate.GetDateTime());
+                                _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, txHistoryItem.Version, true);
+                                GitCommit(new[] {vaultSubdirectory}, doGitPush, vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime());
+                            }
+                        }
+                        else if (!Directory.Exists(fsPath))
+                        {
+                            var subDirTxIds = new SortedSet<long>();
+                            _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, subDirTxIds, 0);
+                            subDirTxIds = subDirTxIds.GetViewBetween(0, currentGitVaultVersion.Value - 1);
+                            if (subDirTxIds.Any())
+                            {
+                                var txIdToGet = subDirTxIds.Last();
+                                var txHistoryItem = GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txIdToGet);
+                                GitCommit(new[] {vaultSubdirectory}, doGitPush, vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime());
                             }
                         }
 
@@ -193,32 +208,29 @@ namespace Vault2Git.Lib
 
         private bool GitCommit(IEnumerable<string> subDirectories, bool doGitPush, string vaultRepoPath, long txId, string gitBranch, string author, string comment, DateTime commitTime)
         {
-            var committedAnything = false;
-            foreach (var subDirectory in subDirectories)
+            var commitMsg = BuildCommitMessage(vaultRepoPath, subDirectories, txId, comment);
+            var gitCommitId = _git.GitCommit(author, commitMsg, commitTime);
+
+            // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
+            var committedAnything = !string.IsNullOrEmpty(gitCommitId);
+            if (!committedAnything)
             {
-                var commitMsg = BuildCommitMessage(vaultRepoPath, subDirectory, txId, comment);
-                var subDir = string.IsNullOrEmpty(subDirectory) ? "." : subDirectory;
-                var gitCommitId = _git.GitCommit(author, commitMsg, commitTime, subDir);
-
-                if (string.IsNullOrEmpty(gitCommitId)) continue;
-                committedAnything = true;
-
-                // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
-                if (!_txidMappings.TryGetValue(txId, out var gitCommitIds))
-                {
-                    gitCommitIds = new HashSet<string>();
-                    _txidMappings[txId] = gitCommitIds;
-                }
-
-                gitCommitIds.Add(gitCommitId);
+                return false;
             }
 
-            if (doGitPush && committedAnything)
+            if (!_txidMappings.TryGetValue(txId, out var gitCommitIds))
+            {
+                gitCommitIds = new HashSet<string>();
+                _txidMappings[txId] = gitCommitIds;
+            }
+            gitCommitIds.Add(gitCommitId);
+
+            if (doGitPush)
             {
                 _git.GitPushOrigin(gitBranch);
             }
 
-            return committedAnything;
+            return true;
         }
 
         private IEnumerable<string> ProcessTransaction(string vaultRepoPath, long txId, out string author, out string comment, out DateTime commitTime)
@@ -387,7 +399,7 @@ namespace Vault2Git.Lib
             return itemPath;
         }
 
-        private void GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
+        private VaultTxHistoryItem GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
         {
             var folderTransactionDetail = _vault.VaultGetFolderVersionExactTxId(vaultRepoPath, vaultSubdirectory, txId);
             if (folderTransactionDetail == null)
@@ -408,6 +420,8 @@ namespace Vault2Git.Lib
             Directory.GetFiles(fsPath, "*.sln", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromSln);
             Directory.GetFiles(fsPath, "*.csproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromCsProj);
             Directory.GetFiles(fsPath, "*.vdproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromVdProj);
+
+            return folderTransactionDetail;
         }
 
         /// <summary>
@@ -581,8 +595,9 @@ namespace Vault2Git.Lib
 
         // vaultLogin is the user name as known in Vault e.g. 'robert' which needs to be mapped to rob.goodridge
 
-        private string BuildCommitMessage(string repoPath, string folderPath, long trxId, string comment) => $"{comment}\n{BuildVaultTag(repoPath, folderPath)}@{trxId}";
-        private string BuildVaultTag(string repoPath, string folderPath) => $"{VaultTag} {_vault.VaultRepository}{repoPath}/{folderPath}";
+        private string BuildCommitMessage(string repoPath, IEnumerable<string> folderPaths, long trxId, string comment) => $"{comment}\n{BuildVaultTag(repoPath, folderPaths)}@{trxId}";
+        private string VaultTagStem => $"{VaultTag} {_vault.VaultRepository}";
+        private string BuildVaultTag(string repoPath, IEnumerable<string> folderPaths) => $"{VaultTagStem} {repoPath}/{string.Join(";", folderPaths)}";
 
         private void VaultFinalize(string vaultRepoPath)
         {
