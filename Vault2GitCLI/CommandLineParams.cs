@@ -14,6 +14,9 @@ namespace Vault2Git.CLI
         [Option("skip-empty-commits", Default = false, HelpText = "Do not create empty commits in Git")]
         public bool SkipEmptyCommits { get; set; }
 
+        [Option("ignore-git-ignore", Default = false, HelpText = "Ignore .gitignore files and add --force to gid add command")]
+        public bool IgnoreGitIgnore { get; set; }
+
         [Option("ignore-labels", Default = false, HelpText = "Do not create Git tags from Vault labels")]
         public bool IgnoreLabels { get; set; }
 

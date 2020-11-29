@@ -27,16 +27,18 @@ namespace Vault2Git.Lib
         private readonly string _pathToGitExe;
         private readonly string _gitDomainName;
         private readonly bool _skipEmptyCommits;
+        private readonly bool _ignoreGitIgnore;
         private const int GitGcInterval = 200;
 
         private long _commitCount;
 
-        public GitProvider(string workingFolder, string pathToGitExe, string gitDomainName, bool skipEmptyCommits)
+        public GitProvider(string workingFolder, string pathToGitExe, string gitDomainName, bool skipEmptyCommits, bool ignoreGitIgnore)
         {
             _workingFolder = workingFolder;
             _pathToGitExe = pathToGitExe;
             _gitDomainName = gitDomainName;
             _skipEmptyCommits = skipEmptyCommits;
+            _ignoreGitIgnore = ignoreGitIgnore;
         }
 
         public long? GitVaultVersion(string gitBranch, string vaultTagStem, string vaultTag)
@@ -72,7 +74,8 @@ namespace Vault2Git.Lib
         {
             GitCurrentBranch(out var gitCurrentBranch);
 
-            RunGitCommand($"add --force --all", string.Empty, out var msgs);
+            var forceStr = _ignoreGitIgnore ? "--force" : "";
+            RunGitCommand($"add {forceStr} --all", string.Empty, out var msgs);
             if (_skipEmptyCommits)
             {
                 //checking status
