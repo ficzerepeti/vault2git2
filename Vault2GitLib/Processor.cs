@@ -97,6 +97,7 @@ namespace Vault2Git.Lib
             _git = git;
             _vault = vault;
             _vaultSubdirectories = vaultSubdirectories;
+            if (_vaultSubdirectories.Count == 0) _vaultSubdirectories.Add("");
         }
 
         /// <summary>
@@ -133,12 +134,11 @@ namespace Vault2Git.Lib
                     }
 
                     var txIds = new SortedSet<long>();
-                    var directories = _vaultSubdirectories.Any() ? _vaultSubdirectories : new List<string>{ "" };
 
                     //get current Git version
-                    var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, VaultTagStem, BuildVaultTag(vaultRepoPath, directories));
+                    var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, VaultTagStem, BuildVaultTag(vaultRepoPath));
 
-                    foreach (var vaultSubdirectory in directories)
+                    foreach (var vaultSubdirectory in _vaultSubdirectories)
                     {
                         var fsPath = Path.Combine(WorkingFolder, vaultSubdirectory);
 
@@ -149,25 +149,25 @@ namespace Vault2Git.Lib
                             if (txHistoryItem != null)
                             {
                                 _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, txHistoryItem.Version, true);
-                                GitCommit(new[] {vaultSubdirectory}, doGitPush, vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime());
                             }
                         }
                         else if (!Directory.Exists(fsPath))
                         {
                             var subDirTxIds = new SortedSet<long>();
                             _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, subDirTxIds, 0);
-                            subDirTxIds = subDirTxIds.GetViewBetween(0, currentGitVaultVersion.Value - 1);
+                            subDirTxIds = subDirTxIds.GetViewBetween(0, currentGitVaultVersion.Value);
                             if (subDirTxIds.Any())
                             {
                                 var txIdToGet = subDirTxIds.Last();
-                                var txHistoryItem = GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txIdToGet);
-                                GitCommit(new[] {vaultSubdirectory}, doGitPush, vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime());
+                                GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txIdToGet);
                             }
                         }
 
                         //get vaultVersions
                         _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, txIds, currentGitVaultVersion ?? 0);
                     }
+
+                    GitCommit(doGitPush, vaultRepoPath, currentGitVaultVersion ?? 0, gitBranch, "MergeTool", "Initialising some folders", DateTime.UtcNow);
 
                     Log.Information($"init took {perBranchWatch.Elapsed}");
 
@@ -178,8 +178,8 @@ namespace Vault2Git.Lib
                         
                         ++counter;
 
-                        var subDirectories = ProcessTransaction(vaultRepoPath, txId, out var author, out var comment, out var commitTime);
-                        if (GitCommit(subDirectories, doGitPush, vaultRepoPath, txId, gitBranch, author, comment, commitTime))
+                        ProcessTransaction(vaultRepoPath, txId, out var author, out var comment, out var commitTime);
+                        if (GitCommit(doGitPush, vaultRepoPath, txId, gitBranch, author, comment, commitTime))
                         {
                             Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}. Author: {author}, Comment: {comment}, commit time: {commitTime}");
                         }
@@ -206,9 +206,9 @@ namespace Vault2Git.Lib
             }
         }
 
-        private bool GitCommit(IEnumerable<string> subDirectories, bool doGitPush, string vaultRepoPath, long txId, string gitBranch, string author, string comment, DateTime commitTime)
+        private bool GitCommit(bool doGitPush, string vaultRepoPath, long txId, string gitBranch, string author, string comment, DateTime commitTime)
         {
-            var commitMsg = BuildCommitMessage(vaultRepoPath, subDirectories, txId, comment);
+            var commitMsg = BuildCommitMessage(vaultRepoPath, txId, comment);
             var gitCommitId = _git.GitCommit(author, commitMsg, commitTime);
 
             // Mapping Vault Transaction ID to Git Commit SHA-1 Hash
@@ -233,9 +233,8 @@ namespace Vault2Git.Lib
             return true;
         }
 
-        private IEnumerable<string> ProcessTransaction(string vaultRepoPath, long txId, out string author, out string comment, out DateTime commitTime)
+        private void ProcessTransaction(string vaultRepoPath, long txId, out string author, out string comment, out DateTime commitTime)
         {
-            var subDirectories = new HashSet<string>();
             var foldersRecursivelyDownloaded = new HashSet<string>();
 
             var txnInfo = _vault.GetTxInfo(txId);
@@ -262,8 +261,6 @@ namespace Vault2Git.Lib
                 {
                     continue;
                 }
-
-                subDirectories.Add(vaultSubdirectory);
 
                 if (ForceFullFolderGet) continue;
 
@@ -369,8 +366,6 @@ namespace Vault2Git.Lib
                         break;
                 }
             }
-
-            return subDirectories;
         }
 
         private static void DeleteFileOrFolder(string fsPath)
@@ -399,7 +394,7 @@ namespace Vault2Git.Lib
             return itemPath;
         }
 
-        private VaultTxHistoryItem GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
+        private void GetVaultSubdirectoryExactTxId(string vaultRepoPath, string vaultSubdirectory, long txId)
         {
             var folderTransactionDetail = _vault.VaultGetFolderVersionExactTxId(vaultRepoPath, vaultSubdirectory, txId);
             if (folderTransactionDetail == null)
@@ -420,8 +415,6 @@ namespace Vault2Git.Lib
             Directory.GetFiles(fsPath, "*.sln", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromSln);
             Directory.GetFiles(fsPath, "*.csproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromCsProj);
             Directory.GetFiles(fsPath, "*.vdproj", SearchOption.AllDirectories).Where(f => !f.Contains("~")).ToList().ForEach(RemoveSccFromVdProj);
-
-            return folderTransactionDetail;
         }
 
         /// <summary>
@@ -556,12 +549,6 @@ namespace Vault2Git.Lib
 
         private bool TryFindMatchingSubdir(string vaultRepo, string itemPath, out string matchingVaultSubdirectory)
         {
-            if (!_vaultSubdirectories.Any())
-            {
-                matchingVaultSubdirectory = "";
-                return true;
-            }
-
             itemPath = RemoveRepoFromItemPath(vaultRepo, itemPath);
 
             foreach (var vaultSubdirectory in _vaultSubdirectories)
@@ -595,9 +582,9 @@ namespace Vault2Git.Lib
 
         // vaultLogin is the user name as known in Vault e.g. 'robert' which needs to be mapped to rob.goodridge
 
-        private string BuildCommitMessage(string repoPath, IEnumerable<string> folderPaths, long trxId, string comment) => $"{comment}\n{BuildVaultTag(repoPath, folderPaths)}@{trxId}";
+        private string BuildCommitMessage(string repoPath, long trxId, string comment) => $"{comment}\n{BuildVaultTag(repoPath)}@{trxId}";
         private string VaultTagStem => $"{VaultTag} {_vault.VaultRepository}";
-        private string BuildVaultTag(string repoPath, IEnumerable<string> folderPaths) => $"{VaultTagStem} {repoPath}/{string.Join(";", folderPaths)}";
+        private string BuildVaultTag(string repoPath) => $"{VaultTagStem} {repoPath}/{string.Join(";", _vaultSubdirectories)}";
 
         private void VaultFinalize(string vaultRepoPath)
         {
