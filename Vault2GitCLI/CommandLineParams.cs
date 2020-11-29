@@ -77,13 +77,13 @@ namespace Vault2Git.CLI
                 Directories = appCfgDirectories.Value.Split(';').ToList();
             }
             
-            VaultServer = VaultServer ?? appSettings.Settings["Vault.Server"].Value;
-            VaultUser = VaultUser ?? appSettings.Settings["Vault.User"].Value;
-            VaultPassword = VaultPassword ?? appSettings.Settings["Vault.Password"].Value;
-            VaultRepo = VaultRepo ?? appSettings.Settings["Vault.Repo"].Value;
-            GitDomainName = GitDomainName ?? appSettings.Settings["Git.DomainName"].Value;
-            WorkingFolder = WorkingFolder ?? appSettings.Settings["Convertor.WorkingFolder"].Value;
-            GitCmd = GitCmd ?? appSettings.Settings["Convertor.GitCmd"].Value;
+            VaultServer ??= appSettings.Settings["Vault.Server"].Value;
+            VaultUser ??= appSettings.Settings["Vault.User"].Value;
+            VaultPassword ??= appSettings.Settings["Vault.Password"].Value;
+            VaultRepo ??= appSettings.Settings["Vault.Repo"].Value;
+            GitDomainName ??= appSettings.Settings["Git.DomainName"].Value;
+            WorkingFolder ??= appSettings.Settings["Convertor.WorkingFolder"].Value;
+            GitCmd ??= appSettings.Settings["Convertor.GitCmd"].Value;
             
             if (!Paths.Any())
             {

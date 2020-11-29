@@ -76,7 +76,7 @@ namespace Vault2Git.CLI
             Log.Information(param.ToString());
 
             var git = new GitProvider(param.WorkingFolder, param.GitCmd, param.GitDomainName, param.SkipEmptyCommits, param.IgnoreGitIgnore);
-            var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword, param.BeginDate ?? new DateTime(1990,1,1));
+            var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword, param.BeginDate ?? new DateTime(1997,1,1));
 
             var processor = new Processor(git, vault, param.Directories.ToList())
             {
