@@ -137,6 +137,7 @@ namespace Vault2Git.Lib
 
                     //get current Git version
                     var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, VaultTagStem, BuildVaultTag(vaultRepoPath));
+                    var needsInitialCommit = false;
 
                     foreach (var vaultSubdirectory in _vaultSubdirectories)
                     {
@@ -149,6 +150,7 @@ namespace Vault2Git.Lib
                             if (txHistoryItem != null)
                             {
                                 _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, txHistoryItem.Version, true);
+                                needsInitialCommit = true;
                             }
                         }
                         else if (!Directory.Exists(fsPath))
@@ -160,6 +162,7 @@ namespace Vault2Git.Lib
                             {
                                 var txIdToGet = subDirTxIds.Last();
                                 GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txIdToGet);
+                                needsInitialCommit = true;
                             }
                         }
 
@@ -167,7 +170,10 @@ namespace Vault2Git.Lib
                         _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, txIds, currentGitVaultVersion ?? 0);
                     }
 
-                    GitCommit(doGitPush, vaultRepoPath, currentGitVaultVersion ?? 0, gitBranch, "MergeTool", "Initialising some folders", DateTime.UtcNow);
+                    if (needsInitialCommit)
+                    {
+                        GitCommit(doGitPush, vaultRepoPath, currentGitVaultVersion ?? 0, gitBranch, "MergeTool", "Initialising some folders", DateTime.UtcNow);
+                    }
 
                     Log.Information($"init took {perBranchWatch.Elapsed}");
 
