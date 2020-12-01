@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using Serilog;
+using VaultClientIntegrationLib;
 using VaultLib;
 
 namespace Vault2Git.Lib
@@ -196,7 +197,21 @@ namespace Vault2Git.Lib
                         
                         ++counter;
 
-                        ProcessTransaction(vaultRepoPath, txHistoryItem.TxID);
+                        TxInfo txInfo;
+                        try
+                        {
+                            txInfo = _vault.GetTxInfo(txHistoryItem.TxID);
+                        }
+                        catch (Exception e)
+                        {
+                            Log.Warning($"Failed to get transaction info for {txHistoryItem}:\n{e}");
+                            continue;
+                        }
+
+                        var files = string.Join(",", txInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
+                        Log.Debug($"Processing transaction ID {txHistoryItem.TxID}: commit time: {txHistoryItem.TxDate}, comment: {txHistoryItem.Comment}, author: {txHistoryItem.UserLogin}, files/dirs: {files}");
+
+                        ProcessTransaction(vaultRepoPath, txHistoryItem.TxID, txInfo);
                         if (GitCommit(doGitPush, vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime()))
                         {
                             Log.Information($"processing transaction {txHistoryItem.TxID} took {perTransactionWatch.Elapsed}. Author: {txHistoryItem.UserLogin}, Comment: {txHistoryItem.Comment}, commit time: {txHistoryItem.TxDate.GetDateTime()}");
@@ -251,22 +266,12 @@ namespace Vault2Git.Lib
             return true;
         }
 
-        private void ProcessTransaction(string vaultRepoPath, long txId)
+        private void ProcessTransaction(string vaultRepoPath, long txId, TxInfo txInfo)
         {
             var foldersRecursivelyDownloaded = new HashSet<string>();
 
-            var txnInfo = _vault.GetTxInfo(txId);
-
             // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
-            var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
-            if (orderedItems.Any())
-            {
-                var commitTime = orderedItems.First().TxDate;
-                var files = string.Join(",", txnInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
-                Log.Debug($"Processing transaction ID {txId}: commit time: {commitTime}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
-            }
-
-            foreach (var txDetailItem in orderedItems)
+            foreach (var txDetailItem in txInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move))
             {
                 if (!TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath1, out var vaultSubdirectory)
                     && !TryFindMatchingSubdir(vaultRepoPath, txDetailItem.ItemPath2, out vaultSubdirectory))
