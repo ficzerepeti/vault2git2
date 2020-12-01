@@ -67,6 +67,18 @@ namespace Vault2Git.Lib
         }
     }
 
+    public class VaultTxHistoryItemComparer : IComparer<VaultTxHistoryItem>
+    {
+        public int Compare(VaultTxHistoryItem x, VaultTxHistoryItem y)
+        {
+            if (x.TxID == y.TxID)
+            {
+                return 0;
+            }
+            return x.TxDate < y.TxDate ? -1 : 1;
+        }
+    }
+
     public class Processor
     {
         /// <summary>
@@ -133,41 +145,41 @@ namespace Vault2Git.Lib
                         Environment.Exit(1);
                     }
 
-                    var txIds = new SortedSet<long>();
+                    var txHistoryItems = new SortedSet<VaultTxHistoryItem>(new VaultTxHistoryItemComparer());
 
                     //get current Git version
                     var currentGitVaultVersion = _git.GitVaultVersion(gitBranch, VaultTagStem, BuildVaultTag(vaultRepoPath));
                     var needsInitialCommit = false;
 
-                    foreach (var vaultSubdirectory in _vaultSubdirectories)
+                    foreach (var vaultSubDirectory in _vaultSubdirectories)
                     {
-                        var fsPath = Path.Combine(WorkingFolder, vaultSubdirectory);
+                        var fsPath = Path.Combine(WorkingFolder, vaultSubDirectory);
 
                         // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
                         if (!currentGitVaultVersion.HasValue)
                         {
-                            var txHistoryItem = _vault.VaultGetFolderVersionNearestBeforeBeginDate(vaultRepoPath, vaultSubdirectory);
+                            var txHistoryItem = _vault.VaultGetFolderVersionNearestBeforeBeginDate(vaultRepoPath, vaultSubDirectory);
                             if (txHistoryItem != null)
                             {
-                                _vault.VaultGetVersion(vaultRepoPath, vaultSubdirectory, txHistoryItem.Version, true);
+                                _vault.VaultGetVersion(vaultRepoPath, vaultSubDirectory, txHistoryItem.Version, true);
                                 needsInitialCommit = true;
                             }
                         }
                         else if (!Directory.Exists(fsPath))
                         {
-                            var subDirTxIds = new SortedSet<long>();
-                            _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, subDirTxIds, 0);
-                            subDirTxIds = subDirTxIds.GetViewBetween(0, currentGitVaultVersion.Value);
-                            if (subDirTxIds.Any())
+                            var subDirTxIds = _vault.VaultPopulateInfo(vaultRepoPath, vaultSubDirectory, 0);
+                            var prevTxHistoryItem = subDirTxIds.LastOrDefault(x => x.TxID < currentGitVaultVersion.Value);
+                            if (prevTxHistoryItem != null)
                             {
-                                var txIdToGet = subDirTxIds.Last();
-                                GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txIdToGet);
+                                var txIdToGet = prevTxHistoryItem.TxID;
+                                GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubDirectory, txIdToGet);
                                 needsInitialCommit = true;
                             }
                         }
 
                         //get vaultVersions
-                        _vault.VaultPopulateInfo(vaultRepoPath, vaultSubdirectory, txIds, currentGitVaultVersion ?? 0);
+                        var newTxIds = _vault.VaultPopulateInfo(vaultRepoPath, vaultSubDirectory, currentGitVaultVersion ?? 0);
+                        txHistoryItems.UnionWith(newTxIds);
                     }
 
                     if (needsInitialCommit)
@@ -178,16 +190,16 @@ namespace Vault2Git.Lib
                     Log.Information($"init took {perBranchWatch.Elapsed}");
 
                     var counter = 0;
-                    foreach (var txId in txIds)
+                    foreach (var txHistoryItem in txHistoryItems)
                     {
                         var perTransactionWatch = Stopwatch.StartNew();
                         
                         ++counter;
 
-                        ProcessTransaction(vaultRepoPath, txId, out var author, out var comment, out var commitTime);
-                        if (GitCommit(doGitPush, vaultRepoPath, txId, gitBranch, author, comment, commitTime))
+                        ProcessTransaction(vaultRepoPath, txHistoryItem.TxID);
+                        if (GitCommit(doGitPush, vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime()))
                         {
-                            Log.Information($"processing transaction {txId} took {perTransactionWatch.Elapsed}. Author: {author}, Comment: {comment}, commit time: {commitTime}");
+                            Log.Information($"processing transaction {txHistoryItem.TxID} took {perTransactionWatch.Elapsed}. Author: {txHistoryItem.UserLogin}, Comment: {txHistoryItem.Comment}, commit time: {txHistoryItem.TxDate.GetDateTime()}");
                         }
 
                         //check if limit is reached
@@ -239,25 +251,19 @@ namespace Vault2Git.Lib
             return true;
         }
 
-        private void ProcessTransaction(string vaultRepoPath, long txId, out string author, out string comment, out DateTime commitTime)
+        private void ProcessTransaction(string vaultRepoPath, long txId)
         {
             var foldersRecursivelyDownloaded = new HashSet<string>();
 
             var txnInfo = _vault.GetTxInfo(txId);
-            author = txnInfo.userlogin;
-            comment = txnInfo.changesetComment;
-            commitTime = DateTime.MinValue;
 
             // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
             var orderedItems = txnInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move).ToList();
             if (orderedItems.Any())
             {
-                var minTime = orderedItems.Min(x => x.TxDate).GetDateTime();
-                commitTime = orderedItems.Max(x => x.TxDate).GetDateTime();
-                var commitTimeStr = minTime != commitTime ? $"min={minTime},max={commitTime}" : minTime.ToString();
-
+                var commitTime = orderedItems.First().TxDate;
                 var files = string.Join(",", txnInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
-                Log.Debug($"Processing transaction ID {txId}: commit time: {commitTimeStr}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
+                Log.Debug($"Processing transaction ID {txId}: commit time: {commitTime}, comment: {txnInfo.changesetComment}, author: {txnInfo.userlogin}, files/dirs: {files}");
             }
 
             foreach (var txDetailItem in orderedItems)

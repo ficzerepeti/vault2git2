@@ -12,7 +12,7 @@ namespace Vault2Git.Lib
     public interface IVaultProvider
     {
         void VaultLogin();
-        void VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, ISet<long> txIds, long currentGitVaultVersion);
+        IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, long currentGitVaultVersion);
         TxInfo GetTxInfo(long txId);
         void VaultGetVersion(string repoPath, string itemPath, long vaultVersion, bool recursive);
         VaultTxHistoryItem VaultGetFolderVersionExactTxId(string repoPath, string folderPath, long txId);
@@ -36,7 +36,7 @@ namespace Vault2Git.Lib
         private readonly string _vaultUser;
         private readonly string _vaultPassword;
         private readonly VaultDateTime _beginDate;
-        private readonly Dictionary<string, SortedDictionary<long, VaultTxHistoryItem>> _pathToTxIdsToTxDetailHistItem = new Dictionary<string, SortedDictionary<long, VaultTxHistoryItem>>();
+        private readonly Dictionary<string, List<VaultTxHistoryItem>> _pathToTxIdsToTxDetailHistItem = new Dictionary<string, List<VaultTxHistoryItem>>();
 
         public VaultProvider(string vaultServer, string vaultRepository, string vaultUser, string vaultPassword, DateTime beginDate)
         {
@@ -71,8 +71,7 @@ namespace Vault2Git.Lib
         public VaultTxHistoryItem VaultGetFolderVersionExactTxId(string repoPath, string folderPath, long txId)
         {
             var txIdToHistItem = GetTxDetailHistoryItems(repoPath, folderPath);
-            txIdToHistItem.TryGetValue(txId, out var vaultHistoryItem);
-            return vaultHistoryItem;
+            return txIdToHistItem.FirstOrDefault(x => x.TxID == txId);
         }
 
         public VaultTxHistoryItem VaultGetFolderVersionNearestBeforeBeginDate(string repoPath, string folderPath)
@@ -82,10 +81,10 @@ namespace Vault2Git.Lib
             return versions.FirstOrDefault();
         }
 
-        public void VaultPopulateInfo(string repoPath, string subdirectory, ISet<long> txIds, long currentGitVaultVersion)
+        public IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string repoPath, string subdirectory, long currentGitVaultVersion)
         {
             var txIdToHistItem = GetTxDetailHistoryItems(repoPath, subdirectory);
-            txIds.UnionWith(txIdToHistItem.Keys.Where(txId => txId > currentGitVaultVersion));
+            return txIdToHistItem.Where(x => x.TxID > currentGitVaultVersion);
         }
 
         public TxInfo GetTxInfo(long txId) => ServerOperations.ProcessCommandTxDetail(txId);
@@ -179,7 +178,7 @@ namespace Vault2Git.Lib
 
         public void VaultLogout() => ServerOperations.Logout();
 
-        private SortedDictionary<long, VaultTxHistoryItem> GetTxDetailHistoryItems(string repoPath, string subdirectory)
+        private List<VaultTxHistoryItem> GetTxDetailHistoryItems(string repoPath, string subdirectory)
         {
             var fullPath = MakeFullPath(repoPath, subdirectory);
             if (_pathToTxIdsToTxDetailHistItem.TryGetValue(fullPath, out var txIdToHistItem))
@@ -188,7 +187,7 @@ namespace Vault2Git.Lib
             }
 
             var versions = ServerOperations.ProcessCommandVersionHistory(fullPath, -1, _beginDate, new VaultDateTime(2090,1,1), 0);
-            txIdToHistItem = new SortedDictionary<long, VaultTxHistoryItem>(versions.ToDictionary(x => x.TxID, x => x));
+            txIdToHistItem = new List<VaultTxHistoryItem>(versions.Reverse());
             _pathToTxIdsToTxDetailHistItem[fullPath] = txIdToHistItem;
             return txIdToHistItem;
         }
