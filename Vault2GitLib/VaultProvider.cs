@@ -12,11 +12,10 @@ namespace Vault2Git.Lib
     public interface IVaultProvider
     {
         void VaultLogin();
-        IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory);
+        List<VaultTxHistoryItem> VaultGetTxHistoryItems(string vaultRepoPath, string vaultSubdirectory);
         TxInfo GetTxInfo(long txId);
         void VaultGetVersion(string repoPath, string itemPath, long vaultVersion, bool recursive);
         VaultTxHistoryItem VaultGetFolderVersionExactTxId(string repoPath, string folderPath, long txId);
-        VaultTxHistoryItem VaultGetFolderVersionNearestBeforeBeginDate(string repoPath, string folderPath);
         void VaultLogout();
         void SetVaultWorkingFolder(string repoPath, string diskPath);
         void UnSetVaultWorkingFolder(string repoPath);
@@ -35,16 +34,14 @@ namespace Vault2Git.Lib
         private readonly string _vaultServer;
         private readonly string _vaultUser;
         private readonly string _vaultPassword;
-        private readonly VaultDateTime _beginDate;
         private readonly Dictionary<string, List<VaultTxHistoryItem>> _pathToTxIdsToTxDetailHistItem = new Dictionary<string, List<VaultTxHistoryItem>>();
 
-        public VaultProvider(string vaultServer, string vaultRepository, string vaultUser, string vaultPassword, DateTime beginDate)
+        public VaultProvider(string vaultServer, string vaultRepository, string vaultUser, string vaultPassword)
         {
             _vaultServer = vaultServer;
             VaultRepository = vaultRepository;
             _vaultUser = vaultUser;
             _vaultPassword = vaultPassword;
-            _beginDate = new VaultDateTime(beginDate.Ticks);
         }
 
         public void BeginLabelQuery(string itemPath, long objId, out int rowsRetrievedInherited, out int rowsRetrievedRecursive, out string qryToken) =>
@@ -74,14 +71,7 @@ namespace Vault2Git.Lib
             return txIdToHistItem.FirstOrDefault(x => x.TxID == txId);
         }
 
-        public VaultTxHistoryItem VaultGetFolderVersionNearestBeforeBeginDate(string repoPath, string folderPath)
-        {
-            var fullPath = MakeFullPath(repoPath, folderPath);
-            var versions = ServerOperations.ProcessCommandVersionHistory(fullPath, -1, new VaultDateTime(1990,1,1), _beginDate, 1);
-            return versions.FirstOrDefault();
-        }
-
-        public IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string repoPath, string subdirectory)
+        public List<VaultTxHistoryItem> VaultGetTxHistoryItems(string repoPath, string subdirectory)
         {
             return GetTxDetailHistoryItems(repoPath, subdirectory);
         }
@@ -185,7 +175,7 @@ namespace Vault2Git.Lib
                 return txIdToHistItem;
             }
 
-            var versions = ServerOperations.ProcessCommandVersionHistory(fullPath, -1, _beginDate, new VaultDateTime(2090,1,1), 0);
+            var versions = ServerOperations.ProcessCommandVersionHistory(fullPath, -1, new VaultDateTime(1990,1,1), new VaultDateTime(2090,1,1), 0);
             txIdToHistItem = new List<VaultTxHistoryItem>(versions.Reverse());
             _pathToTxIdsToTxDetailHistItem[fullPath] = txIdToHistItem;
             return txIdToHistItem;
