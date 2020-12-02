@@ -325,7 +325,7 @@ namespace Vault2Git.Lib
         private void GetAndCommitTransaction(string vaultRepoPath, VaultTxHistoryItem txHistoryItem, TxInfo txInfo, string gitBranch, Stopwatch perTransactionWatch)
         {
             var files = string.Join(",", txInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
-            Log.Debug($"Processing transaction ID {txHistoryItem.TxID}: commit time: {txHistoryItem.TxDate}, comment: {txHistoryItem.Comment}, author: {txHistoryItem.UserLogin}, files/dirs: {files}");
+            Log.Debug($"Processing transaction ID {txHistoryItem.TxID}: commit time: {txHistoryItem.TxDate.GetDateTime():u}, comment: {txHistoryItem.Comment}, author: {txHistoryItem.UserLogin}, files/dirs: {files}");
 
             var foldersRecursivelyDownloaded = new HashSet<string>();
 
@@ -445,7 +445,7 @@ namespace Vault2Git.Lib
 
             if (GitCommit(vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime()))
             {
-                Log.Information($"Committing transaction {txHistoryItem.TxID} took {perTransactionWatch.Elapsed}. Author: {txHistoryItem.UserLogin}, Comment: {txHistoryItem.Comment}, commit time: {txHistoryItem.TxDate.GetDateTime()}");
+                Log.Information($"Committing transaction {txHistoryItem.TxID} took {perTransactionWatch.Elapsed}. Author: {txHistoryItem.UserLogin}, Comment: {txHistoryItem.Comment}, commit time: {txHistoryItem.TxDate.GetDateTime():u}");
             }
             perTransactionWatch.Restart();
         }
@@ -511,7 +511,7 @@ namespace Vault2Git.Lib
                 throw new Exception($"Failed to get transaction detail for {vaultSubdirectory} and txId {txId}");
             }
 
-            Log.Debug($"Getting {vaultRepoPath}/{vaultSubdirectory} recursively. TxID: {txId}, Time: {folderTransactionDetail.TxDate}, Version: {folderTransactionDetail.Version}, Comment: {folderTransactionDetail.Comment}, Author: {folderTransactionDetail.UserLogin}");
+            Log.Debug($"Getting {vaultRepoPath}/{vaultSubdirectory} recursively. TxID: {txId}, Time: {folderTransactionDetail.TxDate.GetDateTime():u}, Version: {folderTransactionDetail.Version}, Comment: {folderTransactionDetail.Comment}, Author: {folderTransactionDetail.UserLogin}");
             var targetDirectory = Path.Combine(WorkingFolder, vaultSubdirectory);
             if (Directory.Exists(targetDirectory))
             {
