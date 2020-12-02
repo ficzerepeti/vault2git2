@@ -12,7 +12,7 @@ namespace Vault2Git.Lib
     public interface IVaultProvider
     {
         void VaultLogin();
-        IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory, long currentGitVaultVersion);
+        IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string vaultRepoPath, string vaultSubdirectory);
         TxInfo GetTxInfo(long txId);
         void VaultGetVersion(string repoPath, string itemPath, long vaultVersion, bool recursive);
         VaultTxHistoryItem VaultGetFolderVersionExactTxId(string repoPath, string folderPath, long txId);
@@ -81,10 +81,9 @@ namespace Vault2Git.Lib
             return versions.FirstOrDefault();
         }
 
-        public IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string repoPath, string subdirectory, long currentGitVaultVersion)
+        public IEnumerable<VaultTxHistoryItem> VaultPopulateInfo(string repoPath, string subdirectory)
         {
-            var txIdToHistItem = GetTxDetailHistoryItems(repoPath, subdirectory);
-            return txIdToHistItem.Where(x => x.TxID > currentGitVaultVersion);
+            return GetTxDetailHistoryItems(repoPath, subdirectory);
         }
 
         public TxInfo GetTxInfo(long txId) => ServerOperations.ProcessCommandTxDetail(txId);

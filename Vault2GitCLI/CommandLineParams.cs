@@ -11,6 +11,9 @@ namespace Vault2Git.CLI
         [Option("limit", Default = null, HelpText = "Max number of versions to take from Vault for each branch. Default all versions")]
         public long? Limit { get; set; }
 
+        [Option("sample-time-when-no-full-path", Default = null, HelpText = "Sample time when no full time available in transaction detail. This seem to happen on old SourceGear versions and SourceSafe. If specified then merge will jump ahead this much and commit changes in a batch to avoid getting root or subdirectories recursively")]
+        public TimeSpan? SampleTimeWhenNoFullPathAvailable { get; set; }
+
         [Option("skip-empty-commits", Default = false, HelpText = "Do not create empty commits in Git")]
         public bool SkipEmptyCommits { get; set; }
 

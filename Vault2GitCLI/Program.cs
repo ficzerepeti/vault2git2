@@ -76,9 +76,9 @@ namespace Vault2Git.CLI
             Log.Information(param.ToString());
 
             var git = new GitProvider(param.WorkingFolder, param.GitCmd, param.GitDomainName, param.SkipEmptyCommits, param.IgnoreGitIgnore);
-            var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword, param.BeginDate ?? new DateTime(1997,1,1));
+            var vault = new VaultProvider(param.VaultServer, param.VaultRepo, param.VaultUser, param.VaultPassword, param.BeginDate ?? new DateTime(1994,1,1));
 
-            var processor = new Processor(git, vault, param.Directories.ToList())
+            var processor = new Processor(git, vault, param.Directories.ToList(), param.Limit, param.DoGitPushOrigin, param.SampleTimeWhenNoFullPathAvailable)
             {
                 WorkingFolder = param.WorkingFolder,
                 ForceFullFolderGet= param.ForceFullFolderGet
@@ -102,7 +102,7 @@ namespace Vault2Git.CLI
                     {
                         try
                         {
-                            processor.Pull(git2VaultRepoPathsSubset, param.Limit, param.DoGitPushOrigin);
+                            processor.Pull(git2VaultRepoPathsSubset);
                             consecutiveErrorCount = 0;
                         }
                         catch (Exception e)
@@ -117,7 +117,7 @@ namespace Vault2Git.CLI
             }
             else
             {
-                processor.Pull(git2VaultRepoPathsSubset, param.Limit, param.DoGitPushOrigin);
+                processor.Pull(git2VaultRepoPathsSubset);
             }
 
             if (!param.IgnoreLabels)
