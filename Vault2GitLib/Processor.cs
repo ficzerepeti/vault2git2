@@ -164,7 +164,6 @@ namespace Vault2Git.Lib
 
                     //get current Git version
                     var startingGitVaultVersion = _git.GitVaultVersion(gitBranch, VaultTagStem, BuildVaultTag(vaultRepoPath));
-                    var needsInitialCommit = false;
 
                     //get vault versions
                     foreach (var vaultSubDirectory in _vaultSubdirectories)
@@ -188,40 +187,7 @@ namespace Vault2Git.Lib
                         txHistoryItems = new SortedSet<VaultTxHistoryItem>(passCurrentGitVersion, new VaultTxHistoryItemComparer());
                     }
 
-                    // Handle initial checkout if needed
-                    if (startingTxHistoryItem != null || _beginDate.HasValue)
-                    {
-                        foreach (var vaultSubDirectory in _vaultSubdirectories)
-                        {
-                            var fsPath = Path.Combine(WorkingFolder, vaultSubDirectory);
-                            if (string.IsNullOrEmpty(vaultSubDirectory))
-                            {
-                                if (Directory.GetDirectories(fsPath).Any(x => !x.Contains(".git"))) continue;
-                            }
-                            else if (Directory.Exists(fsPath)) continue;
-
-                            var subdirTxItems = _vault.VaultGetTxHistoryItems(vaultRepoPath, vaultSubDirectory);
-
-                            // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
-                            VaultTxHistoryItem folderTxItem = null;
-                            if (startingTxHistoryItem != null)
-                            {
-                                folderTxItem = subdirTxItems.FirstOrDefault(x => x.TxID == startingTxHistoryItem.TxID);
-                            }
-
-                            if (folderTxItem == null && _beginDate.HasValue)
-                            {
-                                folderTxItem = subdirTxItems.LastOrDefault(x => x.TxDate.GetDateTime() < _beginDate.Value);
-                            }
-
-                            if (folderTxItem != null)
-                            {
-                                _vault.VaultGetVersion(vaultRepoPath, vaultSubDirectory, folderTxItem.Version, true);
-                                needsInitialCommit = true;
-                            }
-                        }
-                    }
-
+                    var needsInitialCommit = HandleInitialCheckouts(startingTxHistoryItem, vaultRepoPath);
                     if (needsInitialCommit)
                     {
                         GitCommit(vaultRepoPath, startingGitVaultVersion ?? 0, gitBranch, "MergeTool", "Initialising some folders", DateTime.UtcNow);
@@ -284,6 +250,47 @@ namespace Vault2Git.Lib
                 _git.GitFinalize();
                 Log.Information($"finalization took {finalizeWatch.Elapsed}");
             }
+        }
+
+        private bool HandleInitialCheckouts(VaultTxHistoryItem startingTxHistoryItem, string vaultRepoPath)
+        {
+            if (startingTxHistoryItem == null && !_beginDate.HasValue)
+            {
+                return false;
+            }
+
+            var needsInitialCommit = false;
+            foreach (var vaultSubDirectory in _vaultSubdirectories)
+            {
+                var fsPath = Path.Combine(WorkingFolder, vaultSubDirectory);
+                if (string.IsNullOrEmpty(vaultSubDirectory))
+                {
+                    if (Directory.GetDirectories(fsPath).Any(x => !x.Contains(".git"))) continue;
+                }
+                else if (Directory.Exists(fsPath)) continue;
+
+                var subdirTxItems = _vault.VaultGetTxHistoryItems(vaultRepoPath, vaultSubDirectory);
+
+                // It's possible there was no commit to vault since _beginDate. To make behaviour consistent with all history merge style let's get the latest versions in case folder is empty
+                VaultTxHistoryItem folderTxItem = null;
+                if (startingTxHistoryItem != null)
+                {
+                    folderTxItem = subdirTxItems.FirstOrDefault(x => x.TxID == startingTxHistoryItem.TxID);
+                }
+
+                if (folderTxItem == null && _beginDate.HasValue)
+                {
+                    folderTxItem = subdirTxItems.LastOrDefault(x => x.TxDate.GetDateTime() < _beginDate.Value);
+                }
+
+                if (folderTxItem != null)
+                {
+                    _vault.VaultGetVersion(vaultRepoPath, vaultSubDirectory, folderTxItem.Version, true);
+                    needsInitialCommit = true;
+                }
+            }
+
+            return needsInitialCommit;
         }
 
         private bool GitCommit(string vaultRepoPath, long txId, string gitBranch, string author, string comment, DateTime commitTime)
