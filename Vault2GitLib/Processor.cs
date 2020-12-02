@@ -89,6 +89,8 @@ namespace Vault2Git.Lib
 
     public class Processor
     {
+        private const string Mergetool = "MergeTool";
+
         /// <summary>
         /// path where conversion will take place. If it not already set as value working folder, it will be set automatically
         /// </summary>
@@ -190,7 +192,7 @@ namespace Vault2Git.Lib
                     var needsInitialCommit = HandleInitialCheckouts(startingTxHistoryItem, vaultRepoPath);
                     if (needsInitialCommit)
                     {
-                        GitCommit(vaultRepoPath, startingGitVaultVersion ?? 0, gitBranch, "MergeTool", "Initialising some folders", DateTime.UtcNow);
+                        GitCommit(vaultRepoPath, startingGitVaultVersion ?? 0, gitBranch, Mergetool, "Initialising some folders", DateTime.UtcNow);
                     }
 
                     Log.Information($"init took {perBranchWatch.Elapsed}");
@@ -466,7 +468,7 @@ namespace Vault2Git.Lib
             }
 
             var commitSummary = string.Join("\n", group.Select(x => $"TxID: {x.Item1.TxID}. Author: {x.Item1.UserLogin}, Comment: {x.Item1.Comment}, commit time: {x.Item1.TxDate.GetDateTime():u}"));
-            if (GitCommit(vaultRepoPath, lastHistoryItem.TxID, gitBranch, "SquashedMerge", commitSummary, lastHistoryItem.TxDate.GetDateTime()))
+            if (GitCommit(vaultRepoPath, lastHistoryItem.TxID, gitBranch, Mergetool, commitSummary, lastHistoryItem.TxDate.GetDateTime()))
             {
                 Log.Information($"Committing transaction took {perTransactionWatch.Elapsed}. {commitSummary}");
             }
