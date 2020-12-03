@@ -209,7 +209,7 @@ namespace Vault2Git.Lib
                         }
                         catch (Exception e)
                         {
-                            Log.Warning($"Failed to get transaction info for {txHistoryItem}:\n{e}");
+                            Log.Warning($"Failed to get transaction info for {txHistoryItem.TxDate.GetDateTime():u}, txID={txHistoryItem.TxID}, author={txHistoryItem.UserLogin}, comment={txHistoryItem.Comment}\n\n{e}");
                             continue;
                         }
 
