@@ -327,7 +327,7 @@ namespace Vault2Git.Lib
             var files = string.Join(",", txInfo.items.Select(x => string.IsNullOrEmpty(x.ItemPath1) ? x.Name : x.ItemPath1));
             Log.Debug($"Processing transaction ID {txHistoryItem.TxID}: commit time: {txHistoryItem.TxDate.GetDateTime():u}, comment: {txHistoryItem.Comment}, author: {txHistoryItem.UserLogin}, files/dirs: {files}");
 
-            var foldersRecursivelyDownloaded = new HashSet<string>();
+            var itemsFailedToGet = new HashSet<string>();
 
             // It has been noticed that renames tend to be listed at the end of txnInfo.items. Make sure this event precedes content updates
             foreach (var txDetailItem in txInfo.items.OrderBy(x => x.RequestType != VaultRequestType.Rename && x.RequestType != VaultRequestType.Move))
@@ -416,13 +416,10 @@ namespace Vault2Git.Lib
                 {
                     _vault.VaultGetVersion(vaultRepoPath, itemPath, versionToGet, false);
                 }
-                catch (Exception e)
+                catch
                 {
-                    if (foldersRecursivelyDownloaded.Add(vaultSubdirectory))
-                    {
-                        Log.Debug($"Failed to get {vaultRepoPath}/{itemPath} version {versionToGet}: {e}");
-                        GetVaultSubdirectoryExactTxId(vaultRepoPath, vaultSubdirectory, txHistoryItem.TxID);
-                    }
+                    itemsFailedToGet.Add(itemPath);
+                    continue;
                 }
 
                 var fsPath = Path.Combine(WorkingFolder, itemPath);
@@ -443,11 +440,72 @@ namespace Vault2Git.Lib
                 }
             }
 
+            GetParentsOfFailedItems(vaultRepoPath, itemsFailedToGet, txHistoryItem.TxID);
+
             if (GitCommit(vaultRepoPath, txHistoryItem.TxID, gitBranch, txHistoryItem.UserLogin, txHistoryItem.Comment, txHistoryItem.TxDate.GetDateTime()))
             {
                 Log.Information($"Committing transaction {txHistoryItem.TxID} took {perTransactionWatch.Elapsed}. Author: {txHistoryItem.UserLogin}, Comment: {txHistoryItem.Comment}, commit time: {txHistoryItem.TxDate.GetDateTime():u}");
             }
             perTransactionWatch.Restart();
+        }
+
+        private void GetParentsOfFailedItems(string vaultRepoPath, HashSet<string> itemsFailedToGet, long txId)
+        {
+            if (itemsFailedToGet.Count == 0)
+            {
+                return;
+            }
+
+            Log.Debug($"Failed to get {string.Join(", ", itemsFailedToGet)} in {vaultRepoPath}. Getting their parents now");
+
+            var subDirToFiles = new Dictionary<string, HashSet<string>>();
+            foreach (var itemPath in itemsFailedToGet)
+            {
+                if (!TryFindMatchingSubdir(vaultRepoPath, itemPath, out var matchingVaultSubdirectory))
+                {
+                    continue;
+                }
+
+                if (!subDirToFiles.TryGetValue(matchingVaultSubdirectory, out var files))
+                {
+                    files = new HashSet<string>();
+                    subDirToFiles.Add(matchingVaultSubdirectory, files);
+                }
+
+                files.Add(itemPath);
+            }
+
+            var downloadedFolders = new HashSet<string>();
+            foreach (var pair in subDirToFiles)
+            {
+                var vaultSubDir = pair.Key;
+                var files = pair.Value;
+
+                for (var parents = new HashSet<string>(files.Select(x => Path.GetDirectoryName(x))); parents.Count > 0; parents.RemoveWhere(parent => downloadedFolders.Any(parent.StartsWith)))
+                {
+                    var parent = parents.OrderBy(x => x.Count(y => y == '/' || y == '\\')).First();
+
+                    try
+                    {
+                        GetVaultSubdirectoryExactTxId(vaultRepoPath, parent, txId);
+                        downloadedFolders.Add(parent);
+                        if (parent == vaultSubDir)
+                        {
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        var grandParent = Path.GetDirectoryName(parent);
+                        if (!string.IsNullOrEmpty(grandParent))
+                        {
+                            parents.Add(grandParent);
+                        }
+                    }
+
+                    parents.Remove(parent);
+                }
+            }
         }
 
         private void GetAndCommitSampledTransactions(string vaultRepoPath, List<Tuple<VaultTxHistoryItem, TxInfo>> group, string gitBranch, Stopwatch perTransactionWatch)
