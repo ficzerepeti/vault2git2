@@ -168,15 +168,10 @@ namespace Vault2Git.Lib
                     var startingGitVaultVersion = _git.GitVaultVersion(gitBranch, VaultTagStem, BuildVaultTag(vaultRepoPath));
 
                     //get vault versions
-                    foreach (var vaultSubDirectory in _vaultSubdirectories)
+                    foreach (var subdirTxItems in _vaultSubdirectories.Select(vaultSubDirectory => _vault.VaultGetTxHistoryItems(vaultRepoPath, vaultSubDirectory)))
                     {
-                        IEnumerable<VaultTxHistoryItem> subdirTxItems = _vault.VaultGetTxHistoryItems(vaultRepoPath, vaultSubDirectory);
-                        // Filter everything before begin date
-                        if (_beginDate.HasValue)
-                        {
-                            subdirTxItems = txHistoryItems.Where(x => x.TxDate.GetDateTime() >= _beginDate.Value);
-                        }
-                        txHistoryItems.UnionWith(subdirTxItems);
+                        var maybeDateFilteredTxItems = _beginDate.HasValue ? subdirTxItems.Where(txItem => txItem.TxDate.GetDateTime() >= _beginDate.Value) : subdirTxItems;
+                        txHistoryItems.UnionWith(maybeDateFilteredTxItems);
                     }
 
                     // Filter all committed vault versions
